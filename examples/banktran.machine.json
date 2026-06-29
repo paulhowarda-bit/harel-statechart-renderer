@@ -1,0 +1,381 @@
+{
+  "id": "BANKTRAN",
+  "context": {
+    "WS-TRAN-TYPE": "",
+    "WS-STATUS": "OK",
+    "WS-COUNT": 0,
+    "WS-SUBPGM": "POSTLOG ",
+    "WS-EOF": "N"
+  },
+  "states": {
+    "0000-MAIN__end1": {
+      "type": "final",
+      "meta": {
+        "kind": "GOBACK",
+        "cobolLine": 21
+      }
+    },
+    "0000-MAIN__seq2": {
+      "entry": [
+        "perform_9000-CLOSE"
+      ],
+      "always": [
+        {
+          "target": "0000-MAIN__end1",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 20,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "0000-MAIN__iter4": {
+      "always": [
+        {
+          "target": "0000-MAIN__loop3",
+          "meta": {
+            "kind": "loop-iter",
+            "cobolLine": 19
+          }
+        }
+      ],
+      "entry": [
+        "perform_2000-DISPATCH"
+      ]
+    },
+    "0000-MAIN__loop3": {
+      "always": [
+        {
+          "guard": "UNTIL_WS-EOF_eq_Y",
+          "target": "0000-MAIN__seq2",
+          "meta": {
+            "kind": "loop-exit",
+            "cobolLine": 19
+          }
+        },
+        {
+          "target": "0000-MAIN__iter4",
+          "meta": {
+            "kind": "loop-body",
+            "cobolLine": 19
+          }
+        }
+      ]
+    },
+    "0000-MAIN": {
+      "entry": [
+        "perform_1000-OPEN"
+      ],
+      "always": [
+        {
+          "target": "0000-MAIN__loop3",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 18,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "1000-OPEN__seq6": {
+      "entry": [
+        "MOVE_Y_TO_WS-EOF"
+      ],
+      "always": [
+        {
+          "target": "2000-DISPATCH",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 25,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "1000-OPEN__io5": {
+      "entry": [
+        "read_TRAN-FILE"
+      ],
+      "always": [
+        {
+          "guard": "TRAN-FILE_atEnd",
+          "target": "1000-OPEN__seq6",
+          "meta": {
+            "kind": "io-handler",
+            "cobolLine": 24,
+            "note": "AT_END"
+          }
+        },
+        {
+          "target": "2000-DISPATCH",
+          "meta": {
+            "kind": "io-continue",
+            "cobolLine": 24,
+            "note": "normal (no condition)"
+          }
+        }
+      ]
+    },
+    "1000-OPEN": {
+      "entry": [
+        "OPEN_INPUT_TRAN-FILE"
+      ],
+      "always": [
+        {
+          "target": "1000-OPEN__io5",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 23,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2000-DISPATCH__seq8": {
+      "entry": [
+        "MOVE_Y_TO_WS-EOF"
+      ],
+      "always": [
+        {
+          "target": "2100-DEPOSIT",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 35,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2000-DISPATCH__io7": {
+      "entry": [
+        "read_TRAN-FILE"
+      ],
+      "always": [
+        {
+          "guard": "TRAN-FILE_atEnd",
+          "target": "2000-DISPATCH__seq8",
+          "meta": {
+            "kind": "io-handler",
+            "cobolLine": 34,
+            "note": "AT_END"
+          }
+        },
+        {
+          "target": "2100-DEPOSIT",
+          "meta": {
+            "kind": "io-continue",
+            "cobolLine": 34,
+            "note": "normal (no condition)"
+          }
+        }
+      ]
+    },
+    "2000-DISPATCH__seq9": {
+      "entry": [
+        "perform_2100-DEPOSIT"
+      ],
+      "always": [
+        {
+          "target": "2000-DISPATCH__io7",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 29,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2000-DISPATCH__seq10": {
+      "entry": [
+        "perform_2200-WITHDRAW"
+      ],
+      "always": [
+        {
+          "target": "2000-DISPATCH__io7",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 30,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2000-DISPATCH__seq11": {
+      "entry": [
+        "perform_2300-INQUIRY"
+      ],
+      "always": [
+        {
+          "target": "2000-DISPATCH__io7",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 31,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2000-DISPATCH__seq12": {
+      "entry": [
+        "perform_2900-ERROR"
+      ],
+      "always": [
+        {
+          "target": "2000-DISPATCH__io7",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 32,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2000-DISPATCH": {
+      "always": [
+        {
+          "guard": "WS-TRAN-TYPE_eq_D",
+          "target": "2000-DISPATCH__seq9",
+          "meta": {
+            "kind": "when",
+            "cobolLine": 28
+          }
+        },
+        {
+          "guard": "WS-TRAN-TYPE_eq_W",
+          "target": "2000-DISPATCH__seq10",
+          "meta": {
+            "kind": "when",
+            "cobolLine": 28
+          }
+        },
+        {
+          "guard": "WS-TRAN-TYPE_eq_I",
+          "target": "2000-DISPATCH__seq11",
+          "meta": {
+            "kind": "when",
+            "cobolLine": 28
+          }
+        },
+        {
+          "target": "2000-DISPATCH__seq12",
+          "meta": {
+            "kind": "when-other",
+            "cobolLine": 28
+          }
+        }
+      ]
+    },
+    "2100-DEPOSIT": {
+      "entry": [
+        "ADD_1_TO_WS-COUNT",
+        "call_POSTLOG"
+      ],
+      "always": [
+        {
+          "target": "2200-WITHDRAW",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 38,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2200-WITHDRAW__seq13": {
+      "entry": [
+        "SUBTRACT_1_FROM_WS-COUNT"
+      ],
+      "always": [
+        {
+          "target": "2300-INQUIRY",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 44,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2200-WITHDRAW__goto14": {
+      "always": [
+        {
+          "target": "2900-ERROR",
+          "meta": {
+            "kind": "goto",
+            "cobolLine": 42,
+            "note": "GO TO - no return"
+          }
+        }
+      ]
+    },
+    "2200-WITHDRAW": {
+      "always": [
+        {
+          "guard": "WS-STATUS_eq_NG",
+          "target": "2200-WITHDRAW__goto14",
+          "meta": {
+            "kind": "if-then",
+            "cobolLine": 41
+          }
+        },
+        {
+          "target": "2200-WITHDRAW__seq13",
+          "meta": {
+            "kind": "if-else",
+            "cobolLine": 41
+          }
+        }
+      ]
+    },
+    "2300-INQUIRY": {
+      "entry": [
+        "DISPLAY_INQUIRY"
+      ],
+      "always": [
+        {
+          "target": "2900-ERROR",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 46,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "2900-ERROR": {
+      "entry": [
+        "DISPLAY_BAD_TRAN"
+      ],
+      "always": [
+        {
+          "target": "9000-CLOSE",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 48,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "9000-CLOSE": {
+      "entry": [
+        "CLOSE_TRAN-FILE"
+      ],
+      "always": [
+        {
+          "target": "__END__",
+          "meta": {
+            "kind": "seq",
+            "cobolLine": 50,
+            "note": "continue"
+          }
+        }
+      ]
+    },
+    "__END__": {
+      "type": "final"
+    }
+  },
+  "initial": "0000-MAIN"
+}

@@ -1,0 +1,135 @@
+{
+  "id": "posting",
+  "initial": "validate",
+  "meta": {
+    "io": {
+      "endpoints": [
+        { "id": "cics",     "kind": "CICS",     "label": "CICS (terminal in)" },
+        { "id": "commarea", "kind": "COMMAREA", "label": "DFHCOMMAREA" },
+        { "id": "ledgerVsam", "kind": "VSAM",   "label": "LEDGER.KSDS" },
+        { "id": "auditDb2", "kind": "Db2",      "label": "AUDIT_LOG table" },
+        { "id": "caller",   "kind": "caller",   "label": "calling program" }
+      ],
+      "fields": [
+        { "id": "txnReq",   "name": "TXN-REQUEST",  "picture": "X(80)" },
+        { "id": "acctNo",   "name": "ACCT-NO",      "picture": "9(10)", "usage": "COMP-3" },
+        { "id": "amount",   "name": "POST-AMT",     "picture": "S9(9)V99", "usage": "COMP-3" },
+        { "id": "ledgerRec","name": "LEDGER-REC",   "picture": "X(200)" },
+        { "id": "auditRow", "name": "AUDIT-ROW",    "picture": "X(120)" },
+        { "id": "rc",       "name": "RETURN-CODE",  "picture": "9(4)", "usage": "COMP" }
+      ]
+    }
+  },
+  "states": {
+    "validate": {
+      "entry": ["clearErrors"],
+      "exit": ["recordValidationTime"],
+      "on": {
+        "OK": { "target": "post", "guard": "isValid", "actions": ["latchRecord"] },
+        "BAD": { "target": "reject" }
+      },
+      "meta": {
+        "provenance": {
+          "cobolParagraph": "1000-VALIDATE-INPUT",
+          "sourceLines": [142, 168],
+          "file": "POSTING.cbl"
+        },
+        "io": {
+          "inputs": [
+            { "event": "OK", "endpoint": "cics" },
+            { "field": "txnReq", "endpoint": "cics" },
+            { "field": "acctNo", "endpoint": "commarea" },
+            { "field": "amount", "endpoint": "commarea" }
+          ]
+        }
+      }
+    },
+    "post": {
+      "type": "parallel",
+      "states": {
+        "ledger": {
+          "initial": "idle",
+          "states": {
+            "idle": { "on": { "POSTED": "writing" } },
+            "writing": {
+              "on": { "DONE": "idle" },
+              "meta": {
+                "provenance": {
+                  "cobolParagraph": "2100-WRITE-LEDGER",
+                  "sourceLines": [201, 240],
+                  "file": "POSTING.cbl"
+                },
+                "io": {
+                  "outputs": [
+                    { "field": "ledgerRec", "endpoint": "ledgerVsam" }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "audit": {
+          "initial": "idle",
+          "states": {
+            "idle": { "on": { "POSTED": "logging" } },
+            "logging": {
+              "on": { "DONE": "idle" },
+              "meta": {
+                "io": {
+                  "outputs": [
+                    { "field": "auditRow", "endpoint": "auditDb2" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "meta": {
+        "harel": {
+          "sensing": "next-step",
+          "broadcast": [
+            { "event": "POSTED", "from": "ledger", "to": ["audit"] }
+          ],
+          "activities": [
+            { "name": "holdDbLock", "binding": "throughout" }
+          ]
+        },
+        "provenance": {
+          "cobolParagraph": "2000-POST-TRANSACTION",
+          "sourceLines": [180, 260],
+          "file": "POSTING.cbl"
+        }
+      },
+      "on": {
+        "COMMIT": { "target": "done" }
+      }
+    },
+    "reject": {
+      "type": "final",
+      "meta": {
+        "provenance": {
+          "cobolParagraph": "9000-REJECT",
+          "sourceLines": [400, 415],
+          "file": "POSTING.cbl"
+        },
+        "io": {
+          "outputs": [
+            { "field": "rc", "endpoint": "caller" }
+          ]
+        }
+      }
+    },
+    "done": {
+      "type": "final",
+      "meta": {
+        "io": {
+          "outputs": [
+            { "field": "rc", "endpoint": "caller" },
+            { "field": "ledgerRec", "endpoint": "commarea" }
+          ]
+        }
+      }
+    }
+  }
+}
