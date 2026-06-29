@@ -36,6 +36,11 @@
   const nodeById = {};
   G.nodes.forEach(n => nodeById[n.id] = n);
 
+  // Truncate long on-canvas labels with an ellipsis. Boxes are width-clamped at
+  // layout time, so a 1000-char COBOL statement must not be painted in full or it
+  // overflows every neighbor. The complete text is always in the hover tooltip.
+  const trunc = (s, n) => { s = String(s == null ? "" : s); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+
   // ---- draw nodes (containers first so children sit on top) ----
   const ordered = G.nodes.slice().sort((a, b) => a.depth - b.depth);
 
@@ -57,7 +62,7 @@
 
   // name
   nodeSel.append("text").attr("class", "name")
-    .attr("x", 8).attr("y", 5).text(d => d.label);
+    .attr("x", 8).attr("y", 5).text(d => trunc(d.label, 44));
 
   // region dividers inside AND-states
   nodeSel.filter(d => d.kind === "and").each(function (d) {
@@ -87,10 +92,13 @@
       .text(d.historyDepth === "deep" ? "H*" : "H");
   });
 
-  // final-state inner ring
-  nodeSel.filter(d => d.kind === "final").append("rect").attr("class", "box")
+  // final-state inner ring — the conventional double-border "final" cue. It must
+  // stay UNFILLED: a filled inner rect (appended after the name) painted right
+  // over the state's label, so every final state rendered as a blank box. With
+  // fill:none it's a thin inner border and the name shows through inside it.
+  nodeSel.filter(d => d.kind === "final").append("rect").attr("class", "final-ring")
     .attr("x", 4).attr("y", 4).attr("width", d => d.width - 8).attr("height", d => d.height - 8)
-    .attr("rx", 5).attr("fill", "#44506a");
+    .attr("rx", 5);
 
   // Compartments: entry / exit / static reactions / activities ("do") at L2 so
   // they are visible at the normal fit zoom (the COBOL behavior lives here —
@@ -101,7 +109,7 @@
     let yy = 22;
     const add = (cls, txt) => {
       g.append("text").attr("class", `compartment ${cls} lod-l2`)
-        .attr("x", 8).attr("y", yy + 12).text(txt);
+        .attr("x", 8).attr("y", yy + 12).text(trunc(txt, 46));
       yy += 16;
     };
     (d.entry || []).forEach(a => add("entry", `entry / ${a}`));
@@ -109,8 +117,11 @@
     ((d.harel && d.harel.staticReactions) || []).forEach(sr => add("sr", `SR: ${sr}`));
     ((d.harel && d.harel.activities) || []).forEach(act =>
       g.append("text").attr("class", "activity-badge lod-l2")
-        .attr("x", 8).attr("y", (yy += 16) - 4).text(`⏲ ${act.name} (${act.binding})`));
-    if (d.provenance && d.provenance.cobolParagraph) {
+        .attr("x", 8).attr("y", (yy += 16) - 4).text(trunc(`⏲ ${act.name} (${act.binding})`, 46)));
+    // Provenance is the finest detail (L3). Skip it on final states — they're
+    // small terminal markers, so the text overflows into neighbors; it stays in
+    // the click inspector. Draw it on roomy states only.
+    if (d.provenance && d.provenance.cobolParagraph && d.kind !== "final") {
       const p = d.provenance;
       const ln = p.sourceLines ? ` ${p.sourceLines.join("–")}` : "";
       g.append("text").attr("class", "provenance lod-l3")
@@ -140,20 +151,33 @@
   edgeSel.append("path").attr("d", edgePath)
     .attr("marker-end", d => d.guard ? "url(#arrow-cond)" : "url(#arrow)");
 
+  // A wide, invisible hit area so the 1.4px edge is easy to hover (rich tooltip)
+  // and click (inspector) — not a pixel-perfect target.
+  edgeSel.append("path").attr("class", "hit").attr("d", edgePath);
+
   // native tooltip: full transition meaning, available at any zoom level
   edgeSel.append("title").text(tooltipFor);
 
   edgeSel.each(function (e) {
     const p = edgePath(e); if (!p) return;
     const s = e.sections[0];
-    const mid = (s.bends && s.bends.length) ? s.bends[Math.floor(s.bends.length / 2)]
-      : { x: (s.start.x + s.end.x) / 2, y: (s.start.y + s.end.y) / 2 };
     const label = labelFor(e);
     if (!label.cap && !label.ac) return;   // drop the "ε(always)" noise: nothing to say
+    // Prefer the position ELK reserved for this label (left-anchored at the box);
+    // fall back to the edge midpoint only if no label box was laid out.
+    let lx, ly, anchor;
+    if (e.labelPos) {
+      lx = e.labelPos.x; ly = e.labelPos.y + 10; anchor = "start";
+    } else {
+      const mid = (s.bends && s.bends.length) ? s.bends[Math.floor(s.bends.length / 2)]
+        : { x: (s.start.x + s.end.x) / 2, y: (s.start.y + s.end.y) / 2 };
+      lx = mid.x; ly = mid.y - 4; anchor = "middle";
+    }
     const g = d3.select(this);
-    const t = g.append("text").attr("class", "elabel").attr("x", mid.x).attr("y", mid.y - 4);
-    if (label.cap) t.append("tspan").attr("class", label.capClass).text(label.cap);
-    if (label.ac) t.append("tspan").attr("class", "ac lod-l2").text(" " + label.ac);
+    const t = g.append("text").attr("class", "elabel")
+      .attr("x", lx).attr("y", ly).attr("text-anchor", anchor);
+    if (label.cap) t.append("tspan").attr("class", label.capClass).text(trunc(label.cap, 42));
+    if (label.ac) t.append("tspan").attr("class", "ac lod-l2").text(" " + trunc(label.ac, 38));
   });
 
   // Display-only prettifier: the emitter slugs COBOL conditions into
@@ -190,6 +214,11 @@
     else if (isAuto(e)) s += "\n(unconditional — always)";
     if (e.event && !isAuto(e)) s += "\non " + e.event;
     if (e.actions && e.actions.length) s += "\ndo " + e.actions.join("; ");
+    const m = e.meta || {};
+    if (m.note) s += "\n" + m.note;
+    if (m.kind || m.cobolLine != null)
+      s += "\nCOBOL " + [m.kind, m.cobolLine != null ? "line " + m.cobolLine : null]
+        .filter(Boolean).join(" · ");
     return s;
   }
 
@@ -207,7 +236,10 @@
         const g = gAnnot.append("g").attr("class", "annot lod-l2");
         g.append("path").attr("d", `M${x1},${y1} L${x2},${y2}`);
         const tag = `broadcast ${b.event}` + (d.harel.sensing ? ` (${d.harel.sensing})` : "");
-        g.append("text").attr("x", (x1 + x2) / 2).attr("y", (y1 + y2) / 2 - 3).text(tag);
+        // sit the label a third of the way along and lifted clear of the line, so
+        // it doesn't land on the region-divider where edge labels already crowd.
+        g.append("text").attr("text-anchor", "middle")
+          .attr("x", x1 + (x2 - x1) * 0.33).attr("y", y1 + (y2 - y1) * 0.33 - 12).text(tag);
       });
     });
   });
@@ -239,20 +271,23 @@
   beSel.append("path")
     .attr("d", d => {
       const s = d.sections[0];
-      return `M${s.start.x},${s.start.y} L${s.end.x},${s.end.y}`;
+      const pts = [s.start].concat(s.bends || [], [s.end]);
+      return "M" + pts.map(p => `${p.x},${p.y}`).join(" L");
     })
     .attr("marker-end", "url(#ioarrow)");
-  beSel.append("text").attr("class", "bedge-label lod-l3")
-    .attr("x", d => (d.sections[0].start.x + d.sections[0].end.x) / 2)
-    .attr("y", d => (d.sections[0].start.y + d.sections[0].end.y) / 2 - 3)
-    .text(d => d.label);
+  // The field/event is already shown as a per-state in/out badge at the state
+  // itself; a second copy mid-rail just collides with the badges and the
+  // endpoint boxes. Keep it on hover instead of painting it on the canvas.
+  beSel.append("title")
+    .text(d => `${d.direction === "in" ? "input" : "output"} · ${d.label}`);
 
   // per-state in/out badges (so a state's interface reads without tracing to edge)
   gNodes.selectAll("g.state").each(function (d) {
     const b = d.ioBadges; if (!b) return;
     const g = d3.select(this);
     const mk = (items, side) => {
-      let yy = 4;
+      // start below the header band on containers so badges never sit on the title
+      let yy = d.isContainer ? 26 : 4;
       items.forEach(it => {
         const bw = 7;
         const grp = g.append("g").attr("class",
@@ -260,12 +295,13 @@
         grp.append("circle")
           .attr("cx", side === "in" ? -bw : d.width + bw)
           .attr("cy", yy + 6).attr("r", 4);
-        grp.append("text").attr("class", "io-badge-text lod-l3")
-          .attr("x", side === "in" ? -bw - 6 : d.width + bw + 6)
-          .attr("y", yy + 9)
-          .attr("text-anchor", side === "in" ? "end" : "start")
-          .text((it.kind === "event" ? "▸" : "▪") + " " + it.label);
-        yy += 16;
+        // The field name is redundant on-canvas (the state already connects by a
+        // labeled arrow to a labeled endpoint box) and its text was the main
+        // source of overlap when zoomed in. Show it on hover; keep the dot.
+        grp.append("title")
+          .text((it.kind === "event" ? "event " : "field ") + it.label
+            + (it.endpoint ? " · " + it.endpoint : ""));
+        yy += 12;
       });
     };
     mk(b.in || [], "in");
@@ -277,7 +313,12 @@
     .on("zoom", (ev) => {
       root.attr("transform", ev.transform);
       const k = ev.transform.k;
-      stage.dataset.lod = k < 0.4 ? "1" : (k < 0.9 ? "2" : "3");
+      // Detail tiers by zoom. The densest layers (COBOL provenance, I/O field
+      // PIC labels) are gated to L3 so the DEFAULT fit view stays a clean
+      // structure+behavior diagram; you zoom past ~1.4× to read the reference
+      // detail. Without this, a small machine fits at high zoom and dumps every
+      // label at once → unreadable.
+      stage.dataset.lod = k < 0.5 ? "1" : (k < 1.4 ? "2" : "3");
       updateMinimapViewport(ev.transform);
     });
   svg.call(zoom).on("dblclick.zoom", null);
@@ -291,6 +332,50 @@
     const tx = (sw - vw * k) / 2 - vx * k, ty = (sh - G.height * k) / 2;
     svg.transition().duration(300).call(zoom.transform,
       d3.zoomIdentity.translate(tx, ty).scale(k));
+  }
+
+  // The opening view favors LEGIBILITY over framing the whole graph. Tall
+  // control-flow graphs (typical of COBOL) fit-to-both at a scale where text is
+  // ~6px and unreadable — the core "hard to read" complaint. When the
+  // see-everything scale would drop below a legible floor, open instead at a
+  // readable zoom, centered horizontally and anchored to the top of the flow, and
+  // let the user pan/scroll down. The Fit button / `f` still frames everything.
+  function initialView() {
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    const vx = (G.viewMinX != null) ? G.viewMinX : 0;
+    const vw = ((G.viewMaxX != null) ? G.viewMaxX : G.width) - vx;
+    const kSeeAll = Math.min(sw / vw, sh / G.height) * 0.92;
+    const LEGIBLE = 0.62;
+    if (kSeeAll >= LEGIBLE) {
+      // Small enough to frame the whole graph and still read it.
+      const k = kSeeAll;
+      svg.call(zoom.transform, d3.zoomIdentity
+        .translate((sw - vw * k) / 2 - vx * k, (sh - G.height * k) / 2).scale(k));
+      return;
+    }
+    // Too big to show legibly at once (tall/wide COBOL flows). Open at a READABLE
+    // zoom anchored to the top of the flow, centered on where the entry-region
+    // nodes actually are — robust to a few outliers that stretch the bounding box,
+    // which otherwise leaves you staring at an empty margin. Pan / search / minimap
+    // navigate the rest; Fit (f) still frames everything.
+    const k = Math.min(1.25, Math.max(0.7, (sw / vw) * 0.98));
+    const leaves = G.nodes.filter(n => !n.isContainer);
+    const pool = leaves.length ? leaves : G.nodes;
+    let minY = Infinity;
+    pool.forEach(n => { if (n.y < minY) minY = n.y; });
+    let tx;
+    if (vw * k <= sw) {
+      tx = (sw - vw * k) / 2 - vx * k;          // fits horizontally — center, nothing clipped
+    } else {
+      // Wider than the viewport: center on where the entry-region nodes actually
+      // are, so you don't open staring at an empty margin that a few outliers
+      // (far-flung branches) stretched the bounding box across.
+      const band = minY + sh / k;               // first screenful of the flow
+      const centers = pool.filter(n => n.y <= band).map(n => n.x + n.width / 2).sort((a, b) => a - b);
+      const cx = centers.length ? centers[Math.floor(centers.length / 2)] : (vx + vw / 2);
+      tx = sw / 2 - cx * k;
+    }
+    svg.call(zoom.transform, d3.zoomIdentity.translate(tx, 16 - minY * k).scale(k));
   }
   window.addEventListener("resize", () => updateMinimapViewport(d3.zoomTransform(svg.node())));
 
@@ -492,6 +577,124 @@
   function clearInspect() { document.getElementById("inspector").classList.remove("show"); }
   function kindLabel(k) { return { or: "OR-state", and: "AND-state (orthogonal)", basic: "basic state", final: "final state", history: "history" }[k] || k; }
 
+  // ---- rich hover tooltip (states, transitions, boundary) ----
+  // A styled HTML tooltip that follows the cursor and shows the FULL program
+  // logic at a glance — enters, exits, static reactions, do-activities, broadcast,
+  // COBOL source, and the external I/O interface for states; event/guard/actions
+  // plus COBOL note/kind/line for transitions. Richer than the native <title>
+  // (which stays as an accessibility fallback) and appears instantly.
+  const tip = d3.select("body").append("div").attr("id", "tooltip");
+
+  function esc(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  function ttRow(label, val, cls) {
+    if (!val) return "";
+    return `<div class="tt-row${cls ? " " + cls : ""}"><span class="tt-k">${label}</span> ${val}</div>`;
+  }
+  const stLabel = id => esc(nodeById[id] ? nodeById[id].label : id);
+
+  function nodeTooltipHTML(d) {
+    const h = d.harel || {};
+    let s = `<div class="tt-title">${esc(d.label)}</div>`;
+    s += `<div class="tt-kind">${esc(kindLabel(d.kind))}` +
+      (d.kind === "history" && d.historyDepth ? ` · ${esc(d.historyDepth)}` : "") + `</div>`;
+    if (d.description) s += `<div class="tt-row tt-desc">${esc(d.description)}</div>`;
+    if (d.entry && d.entry.length)
+      s += ttRow("on enter", d.entry.map(esc).join("; "), "tt-entry");
+    if (d.exit && d.exit.length)
+      s += ttRow("on exit", d.exit.map(esc).join("; "), "tt-exit");
+    if (h.staticReactions && h.staticReactions.length)
+      s += ttRow("reactions", h.staticReactions.map(esc).join("; "), "tt-sr");
+    if (h.activities && h.activities.length)
+      s += ttRow("do (activity)", h.activities.map(a => `${esc(a.name)} (${esc(a.binding)})`).join("; "), "tt-do");
+    if (h.broadcast && h.broadcast.length)
+      s += ttRow("broadcast", h.broadcast.map(b => `${esc(b.event)}: ${esc(b.from)}→${(b.to || []).map(esc).join(",")}`).join("; ") +
+        (h.sensing ? ` (${esc(h.sensing)})` : ""), "tt-bc");
+    if (d.provenance && d.provenance.cobolParagraph) {
+      const p = d.provenance;
+      s += ttRow("COBOL", `${esc(p.file || "")} ${esc(p.cobolParagraph)}` +
+        (p.sourceLines ? ` (lines ${p.sourceLines.join("–")})` : ""), "tt-src");
+    } else if (d.cobolLine != null || d.sourceKind) {
+      const parts = [];
+      if (d.sourceKind) parts.push(esc(d.sourceKind));
+      if (d.cobolLine != null) parts.push("line " + d.cobolLine);
+      s += ttRow("COBOL", parts.join(" · "), "tt-src");
+    }
+    const b = d.ioBadges;
+    if (b && b.in && b.in.length)
+      s += ttRow("inputs", b.in.map(it =>
+        `${it.kind === "event" ? "event" : "field"} ${esc(it.label)}` +
+        (it.endpoint ? ` ← ${esc(epLabel(it.endpoint))}` : (it.unconfirmed ? " (endpoint unconfirmed)" : ""))).join("; "), "tt-in");
+    if (b && b.out && b.out.length)
+      s += ttRow("outputs", b.out.map(it =>
+        `${it.kind === "event" ? "event" : "field"} ${esc(it.label)}` +
+        (it.endpoint ? ` → ${esc(epLabel(it.endpoint))}` : "")).join("; "), "tt-out");
+    s += `<div class="tt-hint">click to pin details</div>`;
+    return s;
+  }
+
+  function edgeTooltipHTML(e) {
+    let s = `<div class="tt-title">${stLabel(e.source)} → ${stLabel(e.target)}</div>`;
+    s += `<div class="tt-kind">${isAuto(e) ? "automatic (always)" : "on " + esc(e.event)}</div>`;
+    if (e.guard) s += ttRow("when", `[${esc(prettyGuard(e.guard))}]`, "tt-guard");
+    else if (isAuto(e)) s += ttRow("when", "unconditional", "tt-guard");
+    if (e.actions && e.actions.length) s += ttRow("do", e.actions.map(esc).join("; "), "tt-do");
+    const m = e.meta || {};
+    if (m.note) s += ttRow("note", esc(m.note), "tt-note");
+    const src = [];
+    if (m.kind) src.push(esc(m.kind));
+    if (m.cobolLine != null) src.push("line " + m.cobolLine);
+    if (src.length) s += ttRow("COBOL", src.join(" · "), "tt-src");
+    return s;
+  }
+
+  function boundaryNodeTooltipHTML(d) {
+    let s = `<div class="tt-title">${esc(d.label)}</div>`;
+    s += `<div class="tt-kind">endpoint · ${esc(d.kind)}</div>`;
+    const ins = (G.index.inputs || []).filter(io => io.endpoint === d.endpointId);
+    const outs = (G.index.outputs || []).filter(io => io.endpoint === d.endpointId);
+    if (ins.length)
+      s += ttRow("into program", ins.map(io => `${esc(io.label)} → ${stLabel(io.state)}`).join("; "), "tt-in");
+    if (outs.length)
+      s += ttRow("out of program", outs.map(io => `${stLabel(io.state)} → ${esc(io.label)}`).join("; "), "tt-out");
+    if (d.endpointId === "__unspecified_in__")
+      s += `<div class="tt-row tt-note">endpoint unconfirmed (detected structurally)</div>`;
+    return s;
+  }
+
+  function positionTip(ev) {
+    const node = tip.node();
+    const pad = 16, vw = window.innerWidth, vh = window.innerHeight;
+    const w = node.offsetWidth, h = node.offsetHeight;
+    let x = ev.clientX + pad, y = ev.clientY + pad;
+    if (x + w > vw - 8) x = ev.clientX - pad - w;
+    if (y + h > vh - 8) y = vh - 8 - h;
+    node.style.left = Math.max(8, x) + "px";
+    node.style.top = Math.max(8, y) + "px";
+  }
+  function hideTip() { tip.classed("show", false); }
+
+  stage.addEventListener("mousemove", (ev) => {
+    const t = ev.target;
+    if (!t || !t.closest) { hideTip(); return; }
+    let html = null, el;
+    if ((el = t.closest("g.edge"))) {
+      const d = d3.select(el).datum(); if (d) html = edgeTooltipHTML(d);
+    } else if ((el = t.closest("g.bedge"))) {
+      const d = d3.select(el).datum();
+      if (d) html = `<div class="tt-title">${d.direction === "in" ? "input" : "output"} · ${esc(d.label)}</div>`;
+    } else if ((el = t.closest("g.boundary"))) {
+      const d = d3.select(el).datum(); if (d) html = boundaryNodeTooltipHTML(d);
+    } else if ((el = t.closest("g.state"))) {
+      const d = d3.select(el).datum(); if (d) html = nodeTooltipHTML(d);
+    }
+    if (html) { tip.html(html).classed("show", true); positionTip(ev); }
+    else hideTip();
+  });
+  stage.addEventListener("mouseleave", hideTip);
+
   // ---- controls ----
   document.getElementById("fitBtn").addEventListener("click", fit);
   document.getElementById("mmBtn").addEventListener("click", () => document.getElementById("minimap").classList.toggle("hidden"));
@@ -508,6 +711,6 @@
   document.getElementById("semantics").textContent =
     "Assumes STATEMATE next-step sensing unless an edge annotation says otherwise.";
 
-  fit();
+  initialView();
   updateMinimapViewport(d3.zoomTransform(svg.node()));
 })();

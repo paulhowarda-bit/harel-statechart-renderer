@@ -1,6 +1,6 @@
 # Upstream bugs in `harel-statechart-render` (v2)
 
-The viewer in `viz/` is built on the `harel-statechart-render` skill and vendors
+The viewer in `vendor/` is built on the `harel-statechart-render` skill and vendors
 its `assets/viewer.js` / `viewer.css`. While integrating it, three bugs in the
 skill surfaced. They are fixed in this repo's vendored copies; this file records
 them so they can be fixed upstream too. Each bites any machine whose states are
@@ -87,4 +87,4 @@ sys.stdout.reconfigure(encoding="utf-8")   # Python 3.7+
 After the fixes, a COBOL-derived machine (24 states, 28 transitions) renders with
 all transitions visible and every `entry / PERFORM-…` label shown at the default
 fit zoom, console clean. Regression guards for bugs 1 and 2 live in
-`tests/test_render_viewer.py`.
+`tests/test_render.py`.

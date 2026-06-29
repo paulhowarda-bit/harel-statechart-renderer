@@ -34,6 +34,7 @@ import json
 import os
 import sys
 import webbrowser
+from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 VENDOR = os.path.join(HERE, "vendor")
@@ -102,6 +103,35 @@ def _event_from_action(a):
     return s
 
 
+def iter_raised_events(val):
+    """Yield the event name(s) a `raise` action produces, from either the
+    string form (`"raise(FOO)"`) or the structured form
+    (`{"type":"raise","event":"FOO"}` / `{"type":"xstate.raise",
+    "event":{"type":"FOO"}}`). Structured actions are what the
+    xstate-cobol-contract skill emits, so missing them here would
+    misclassify an internally-raised event as an external input."""
+    if val is None:
+        return
+    if isinstance(val, list):
+        for a in val:
+            yield from iter_raised_events(a)
+        return
+    if isinstance(val, dict):
+        if "raise" in (val.get("type") or "").lower():
+            ev = val.get("event")
+            if isinstance(ev, dict) and ev.get("type"):
+                yield ev["type"]
+            elif isinstance(ev, str) and ev:
+                yield ev
+        return
+    if isinstance(val, str):
+        low = val.strip().lower()
+        if low.startswith("raise") or "raise(" in low:
+            name = _event_from_action(val.strip())
+            if name and name.lower() != "raise":
+                yield name
+
+
 def iter_transitions(node):
     on = node.get("on", {})
     for event, t in on.items():
@@ -166,6 +196,22 @@ def walk(node, path, elk_nodes, edges, index, depth, raised):
         elk_node["historyDepth"] = history_depth(node)
     if "description" in node:
         elk_node["description"] = node["description"]
+    if node.get("id"):
+        elk_node["xstateId"] = node["id"]
+    # Some emitters (e.g. the COBOL→XState control-flow lowering) record the
+    # source location directly on the state's `meta` as `cobolLine`/`kind`
+    # instead of a full `meta.provenance` block. Surface both so the viewer's
+    # tooltip can show "line N · GOBACK" even when there's no paragraph record.
+    if meta.get("cobolLine") is not None:
+        elk_node["cobolLine"] = meta.get("cobolLine")
+    if meta.get("kind"):
+        elk_node["sourceKind"] = meta.get("kind")
+
+    # entry/exit actions can raise internally-produced events too.
+    for ev in iter_raised_events(node.get("entry")):
+        raised.add(ev)
+    for ev in iter_raised_events(node.get("exit")):
+        raised.add(ev)
 
     index["states"].append({
         "id": path, "name": name, "path": path, "kind": kind, "provenance": prov,
@@ -193,10 +239,15 @@ def walk(node, path, elk_nodes, edges, index, depth, raised):
         target = resolve_target(path, t.get("target"))
         guard = norm_guard(t.get("guard") or t.get("cond"))
         actions = norm_actions(t.get("actions"))
-        for a in actions:
-            low = a.lower()
-            if low.startswith("raise") or "raise(" in low:
-                raised.add(_event_from_action(a))
+        for ev in iter_raised_events(t.get("actions")):
+            raised.add(ev)
+        # A transition's own `meta` carries the program logic the user wants in
+        # edge tooltips: `kind` (seq / loop-exit / goto / io-handler / when…),
+        # a human `note` ("GO TO - no return", "AT_END"), and the `cobolLine`.
+        # Drop empties so edges without meta stay clean.
+        tmeta = t.get("meta") or {}
+        emeta = {k: tmeta[k] for k in ("kind", "note", "cobolLine")
+                 if tmeta.get(k) is not None}
         edge = {
             "id": f"e{len(edges)}",
             "source": path,
@@ -204,14 +255,16 @@ def walk(node, path, elk_nodes, edges, index, depth, raised):
             "event": event,
             "guard": guard,
             "actions": actions,
+            "meta": emeta or None,
             "internal": target is None,
         }
         edges.append(edge)
         index["transitions"].append({
             "source": path, "target": target, "event": event,
-            "guard": guard, "actions": actions,
+            "guard": guard, "actions": actions, "meta": emeta or None,
         })
-        if event and event not in index["events"]:
+        if (event and not event.startswith(("ε(", "after("))
+                and event not in index["events"]):
             index["events"].append(event)
         if guard and guard not in index["guards"]:
             index["guards"].append(guard)
@@ -220,7 +273,7 @@ def walk(node, path, elk_nodes, edges, index, depth, raised):
     return elk_node
 
 
-def build_external_io(machine, elk_nodes, index, raised, io_meta):
+def build_external_io(elk_nodes, index, raised, io_meta):
     endpoints = {}
     for ep in io_meta.get("endpoints", []):
         endpoints[ep["id"]] = {
@@ -324,16 +377,36 @@ def build_graph(machine):
     raised = set()
     walk(machine, root_path, elk_nodes, edges, index, 0, raised)
 
-    id_to_path = {path.split(".")[-1]: path for path in elk_nodes}
+    # Resolve `#id` targets. XState `#foo` references a state's explicit `id:`
+    # field (any custom string), optionally with a `.child.tail` below it.
+    # Prefer the explicit id; fall back to the local path-segment name, but
+    # only when that name is unique — colliding local names (idle, done, …)
+    # would otherwise resolve to whichever state happened to be walked last.
+    explicit, local, ambiguous_local = {}, {}, set()
+    for path, n in elk_nodes.items():
+        xid = n.get("xstateId")
+        if xid:
+            explicit[xid] = path
+        seg = path.split(".")[-1]
+        if seg in local:
+            ambiguous_local.add(seg)
+        else:
+            local[seg] = path
     for e in edges:
         tgt = e["target"]
         if isinstance(tgt, str) and tgt.startswith("#"):
-            key = tgt[1:]
-            e["target"] = id_to_path.get(key, tgt)
-            e["unresolved"] = e["target"].startswith("#")
+            head, _, tail = tgt[1:].partition(".")
+            base = explicit.get(head)
+            if base is None and head in local and head not in ambiguous_local:
+                base = local[head]
+            if base is not None:
+                e["target"] = f"{base}.{tail}" if tail else base
+            elif head in ambiguous_local:
+                e["ambiguous"] = True  # left unresolved rather than guessed
+            e["unresolved"] = isinstance(e["target"], str) and e["target"].startswith("#")
 
     io_meta = (machine.get("meta", {}) or {}).get("io", {}) or {}
-    boundary = build_external_io(machine, elk_nodes, index, raised, io_meta)
+    boundary = build_external_io(elk_nodes, index, raised, io_meta)
 
     return {"root": root_path, "nodes": elk_nodes, "edges": edges,
             "boundary": boundary, "index": index}
@@ -349,7 +422,7 @@ def _escape_for_inline(text):
 
 
 def read_vendor(name):
-    """Return (inline_text_or_None, used_cdn_bool, note). None text => use CDN tag."""
+    """Return (inline_text_or_None, used_cdn_bool). None text => asset missing, use CDN tag."""
     path = os.path.join(VENDOR, name)
     if os.path.isfile(path):
         with open(path, encoding="utf-8") as f:
@@ -504,7 +577,7 @@ def main(argv=None):
         print("  layout: in-browser elkjs (no Node needed) · fully offline, self-contained")
 
     if args.open_browser:
-        uri = "file://" + os.path.abspath(out).replace(os.sep, "/")
+        uri = Path(out).resolve().as_uri()
         webbrowser.open(uri)
         print(f"  opened {uri}")
     return 0

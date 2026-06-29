@@ -36,10 +36,23 @@
       ((node.harel && node.harel.staticReactions) || []).forEach(function (sr) {
         lines.push("SR: " + sr);
       });
-      var maxLen = lines.reduce(function (m, s) { return Math.max(m, s.length); }, 0);
-      var w = Math.max(70, maxLen * CHAR_W + PAD_X * 2);
-      var rows = node.entry.length + node.exit.length +
-        (node.harel.staticReactions ? node.harel.staticReactions.length : 0);
+      ((node.harel && node.harel.activities) || []).forEach(function (act) {
+        lines.push("do " + act.name + " (" + act.binding + ")");
+      });
+      // Clamp the box width to a readable maximum. A single long COBOL statement
+      // (a big COMPUTE, a chained MOVE) would otherwise size one box thousands of
+      // pixels wide and wreck the whole layout — exactly what blew up a 397-state
+      // machine into an unreadable sliver. The full text stays in the hover
+      // tooltip; the on-canvas line is truncated to match (see viewer `trunc`).
+      var MAX_CHARS = 46;
+      var rawMax = lines.reduce(function (m, s) { return Math.max(m, s.length); }, 0);
+      var w = Math.max(70, Math.min(MAX_CHARS, rawMax) * CHAR_W + PAD_X * 2);
+      // Reserve one row per visible compartment line. Activities ("do") were
+      // previously left out, so a leaf with an activity rendered too short and
+      // its badge spilled into the next box — count them here too.
+      var rows = (node.entry || []).length + (node.exit || []).length +
+        ((node.harel && node.harel.staticReactions) || []).length +
+        ((node.harel && node.harel.activities) || []).length;
       return { w: w, h: LINE_H + PAD_Y * 2 + rows * LINE_H };
     }
 
@@ -54,19 +67,33 @@
         _kind: n.kind, _depth: n.depth, _harel: n.harel, _entry: n.entry,
         _exit: n.exit, _provenance: n.provenance, _initial: n.initial || null,
         _historyDepth: n.historyDepth || null, _description: n.description || null,
+        _cobolLine: (n.cobolLine != null ? n.cobolLine : null),
+        _sourceKind: n.sourceKind || null,
       };
       if (kids.length === 0) {
         var s = leafSize(n);
         base.width = s.w; base.height = s.h;
         return base;
       }
+      // reserve a row per compartment/activity the container itself carries, so
+      // its entry/exit/do labels sit in a band below the header instead of
+      // overlapping the first child/region.
+      var compRows = (n.entry || []).length + (n.exit || []).length +
+        ((n.harel && n.harel.staticReactions) || []).length +
+        ((n.harel && n.harel.activities) || []).length;
+      var topPad = HEADER_H + REGION_PAD + compRows * 16;
       base.layoutOptions = {
         "elk.algorithm": "layered",
         "elk.direction": "DOWN",
-        "elk.padding": "[top=" + (HEADER_H + REGION_PAD) + ",left=" + REGION_PAD +
+        "elk.padding": "[top=" + topPad + ",left=" + REGION_PAD +
           ",bottom=" + REGION_PAD + ",right=" + REGION_PAD + "]",
-        "elk.spacing.nodeNode": "24",
-        "elk.layered.spacing.nodeNodeBetweenLayers": "28",
+        "elk.spacing.nodeNode": "26",
+        "elk.layered.spacing.nodeNodeBetweenLayers": "30",
+        // make ELK reserve room for edge labels and place them beside the edge,
+        // so POSTED/DONE/guard captions don't pile onto each other or the boxes.
+        "elk.edgeLabels.placement": "CENTER",
+        "elk.spacing.edgeLabel": "4",
+        "elk.layered.spacing.edgeLabelSpacing": "4",
       };
       base.children = kids.map(buildElk);
       base.edges = [];
@@ -87,10 +114,29 @@
       "elk.algorithm": "layered",
       "elk.direction": "DOWN",
       "elk.hierarchyHandling": "INCLUDE_CHILDREN",
-      "elk.spacing.nodeNode": "28",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "32",
+      "elk.spacing.nodeNode": "36",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "46",
+      "elk.spacing.edgeNode": "16",
+      "elk.spacing.edgeEdge": "12",
       "elk.edgeRouting": "ORTHOGONAL",
+      "elk.edgeLabels.placement": "CENTER",
+      "elk.spacing.edgeLabel": "4",
     };
+
+    // The caption the viewer will paint for an edge (mirrors viewer.labelFor),
+    // used here only to size the label so ELK reserves space for it. Auto edges
+    // (ε(always)/after) with no guard show nothing, so they get no label box.
+    function edgeIsAuto(e) {
+      return !e._event || e._event === "ε(always)" ||
+        (typeof e._event === "string" && e._event.indexOf("after(") === 0);
+    }
+    function edgeCaption(e) {
+      var cap = edgeIsAuto(e)
+        ? (e._guard ? "[" + e._guard + "]" : "")
+        : (e._event + (e._guard ? " [" + e._guard + "]" : ""));
+      var ac = (e._actions && e._actions.length) ? " / " + e._actions.join("; ") : "";
+      return (cap + ac).trim();
+    }
 
     var containerById = {};
     (function indexContainers(node) {
@@ -105,10 +151,17 @@
       }
       var host = containerById[lca(e.source, e.target)] || root;
       host.edges = host.edges || [];
-      host.edges.push({
+      var elkEdge = {
         id: e.id, sources: [e.source], targets: [e.target],
-        _event: e.event, _guard: e.guard, _actions: e.actions,
-      });
+        _event: e.event, _guard: e.guard, _actions: e.actions, _meta: e.meta || null,
+      };
+      var cap = edgeCaption(elkEdge);
+      if (cap) {
+        // give ELK a real label box so it routes with room for the caption
+        // (clamped — a long action string shouldn't reserve a kilopixel label)
+        elkEdge.labels = [{ text: cap, width: Math.min(cap.length, 48) * 6.2 + 4, height: 14 }];
+      }
+      host.edges.push(elkEdge);
     }
 
     var elk = new ELK();
@@ -125,6 +178,7 @@
             entry: node._entry, exit: node._exit, provenance: node._provenance,
             initial: node._initial, historyDepth: node._historyDepth,
             description: node._description,
+            cobolLine: node._cobolLine, sourceKind: node._sourceKind,
             label: (node.labels && node.labels[0] && node.labels[0].text) || node.id,
             isContainer: !!(node.children && node.children.length),
             ioBadges: graph.nodes[node.id] ? (graph.nodes[node.id].ioBadges || null) : null,
@@ -138,9 +192,14 @@
               end: { x: ax + s.endPoint.x, y: ay + s.endPoint.y },
             };
           });
+          // ELK placed the label box; hand its absolute position to the viewer
+          // so the caption sits where space was reserved, not at a guessed mid.
+          var lbl = (e.labels && e.labels[0] && e.labels[0].x != null) ? e.labels[0] : null;
           out.edges.push({
             id: e.id, source: e.sources[0], target: e.targets[0],
-            event: e._event, guard: e._guard, actions: e._actions, sections: secs,
+            event: e._event, guard: e._guard, actions: e._actions, meta: e._meta || null,
+            sections: secs,
+            labelPos: lbl ? { x: ax + lbl.x, y: ay + lbl.y, width: lbl.width, height: lbl.height } : null,
           });
         });
         (node.children || []).forEach(function (c) { flatten(c, ax, ay); });
@@ -151,7 +210,8 @@
         if (e.internal && e.source) {
           out.edges.push({
             id: e.id, source: e.source, target: null,
-            event: e.event, guard: e.guard, actions: e.actions, internal: true, sections: [],
+            event: e.event, guard: e.guard, actions: e.actions, meta: e.meta || null,
+            internal: true, sections: [],
           });
         }
       });
@@ -163,7 +223,7 @@
       var nodeAbs = {};
       out.nodes.forEach(function (n) { nodeAbs[n.id] = n; });
 
-      var GUT = 220, BN_W = 150, BN_H = 46, BN_VGAP = 24;
+      var GUT = 230, BN_W = 150, BN_H = 46, BN_VGAP = 24;
       var epDir = {};
       boundary.edges.forEach(function (e) {
         epDir[e.endpoint] = epDir[e.endpoint] || { in: 0, out: 0 };
@@ -189,19 +249,42 @@
 
       var bnById = {};
       boundary.nodes.forEach(function (bn) { bnById[bn.id] = bn; });
+      // Route each boundary edge ORTHOGONALLY through the side margin instead of
+      // as a straight diagonal across the interior: gutter → vertical rail in the
+      // empty margin → horizontal into the state. The label sits on the rail (in
+      // the margin), never on top of an interior box. Rails are staggered per
+      // endpoint column so parallel edges don't overlap into one thick line.
+      var leftRail = -36, rightRail = out.width + 36, RAIL_STEP = 18;
+      var railSlot = {};
       boundary.edges.forEach(function (be) {
         var st = nodeAbs[be.state]; var bn = bnById[be.endpointNode];
         if (!st || !bn) return;
-        var stPt = { x: st.x + (be.direction === "in" ? 0 : st.width), y: st.y + st.height / 2 };
-        var bnPt = { x: bn.x + (bn.x < 0 ? bn.width : 0), y: bn.y + bn.height / 2 };
-        var start = be.direction === "in" ? bnPt : stPt;
-        var end = be.direction === "in" ? stPt : bnPt;
+        var isLeft = bn.x < 0;
+        // stagger the vertical rail per endpoint so its fan of edges is separable
+        var key = (isLeft ? "L" : "R") + be.endpointNode;
+        if (railSlot[key] === undefined) railSlot[key] = Object.keys(railSlot).length;
+        var railX = (isLeft ? leftRail : rightRail) +
+          (isLeft ? -1 : 1) * (railSlot[key] % 4) * RAIL_STEP;
+        var stX = isLeft ? st.x : st.x + st.width;
+        var stY = st.y + st.height / 2;
+        var bnX = isLeft ? bn.x + bn.width : bn.x;
+        var bnY = bn.y + bn.height / 2;
+        var pts = [
+          { x: bnX, y: bnY },      // leave the gutter node, inner side
+          { x: railX, y: bnY },    // to the rail
+          { x: railX, y: stY },    // down/up the rail (in the margin)
+          { x: stX, y: stY },      // into the state's near side
+        ];
+        if (be.direction !== "in") pts.reverse();  // arrow points state → gutter
         out.boundaryEdges = out.boundaryEdges || [];
         out.boundaryEdges.push({
           id: be.id, endpoint: be.endpoint, state: be.state,
           direction: be.direction, kind: be.kind, label: be.label,
           unconfirmedEndpoint: !!be.unconfirmedEndpoint,
-          sections: [{ start: start, bends: [], end: end }],
+          sections: [{ start: pts[0], bends: pts.slice(1, -1), end: pts[pts.length - 1] }],
+          labelX: railX + (isLeft ? -6 : 6),
+          labelY: (bnY + stY) / 2,
+          labelAnchor: isLeft ? "end" : "start",
         });
       });
       out.boundaryNodes = out.nodes.filter(function (n) { return n.isBoundary; });

@@ -145,3 +145,218 @@ def test_bundle_input_is_accepted():
     cfg = _config("banktran")
     assert render_statechart.extract_machine({"machine": cfg}) is cfg
     assert render_statechart.extract_machine(cfg) is cfg
+
+
+# -- 5. raised events are internal, not external inputs ---------------------
+
+def test_iter_raised_events_handles_string_and_structured_forms():
+    f = render_statechart.iter_raised_events
+    assert list(f("raise(FOO)")) == ["FOO"]
+    assert list(f({"type": "raise", "event": "BAR"})) == ["BAR"]
+    assert list(f({"type": "xstate.raise", "event": {"type": "BAZ"}})) == ["BAZ"]
+    assert list(f([{"type": "assign"}, {"type": "raise", "event": "Q"}])) == ["Q"]
+    assert list(f("assign(x)")) == []
+    assert list(f(None)) == []
+
+
+@pytest.mark.parametrize("action", [
+    {"type": "raise", "event": "DONE"},                 # structured (contract form)
+    {"type": "xstate.raise", "event": {"type": "DONE"}},  # xstate canonical form
+    "raise(DONE)",                                       # string form
+])
+def test_structured_raise_is_not_misclassified_as_external_input(action):
+    machine = {
+        "id": "m", "initial": "a",
+        "states": {
+            "a": {"on": {"GO": {"target": "b", "actions": [action]}}},
+            "b": {"on": {"DONE": {"target": "a"}}},
+        },
+    }
+    boundary = render_statechart.build_graph(machine)["boundary"]
+    assert "DONE" not in boundary["externalInputEvents"], (
+        "an internally-raised event must not appear as an external input")
+    assert "GO" in boundary["externalInputEvents"]
+
+
+def test_entry_raised_event_is_internal():
+    machine = {
+        "id": "m", "initial": "a",
+        "states": {
+            "a": {"entry": [{"type": "raise", "event": "TICK"}],
+                  "on": {"TICK": {"target": "b"}}},
+            "b": {},
+        },
+    }
+    boundary = render_statechart.build_graph(machine)["boundary"]
+    assert "TICK" not in boundary["externalInputEvents"]
+
+
+# -- 6. #id target resolution: explicit id, collision safety ----------------
+
+def test_hashid_resolves_by_explicit_id_over_colliding_local_name():
+    machine = {
+        "id": "m", "initial": "p",
+        "states": {
+            "p": {"initial": "done", "states": {"done": {"id": "pDone"}}},
+            "q": {"initial": "done", "states": {"done": {}},
+                  "on": {"X": {"target": "#pDone"}}},
+        },
+    }
+    graph = render_statechart.build_graph(machine)
+    e = next(e for e in graph["edges"] if e["event"] == "X")
+    assert e["target"] == "m.p.done"
+    assert not e.get("unresolved")
+
+
+def test_hashid_resolves_dotted_descendant():
+    machine = {
+        "id": "m", "initial": "p",
+        "states": {
+            "p": {"id": "pp", "initial": "c", "states": {"c": {}}},
+            "q": {"on": {"X": {"target": "#pp.c"}}},
+        },
+    }
+    e = next(e for e in render_statechart.build_graph(machine)["edges"]
+             if e["event"] == "X")
+    assert e["target"] == "m.p.c"
+
+
+def test_hashid_ambiguous_local_name_is_flagged_not_guessed():
+    machine = {
+        "id": "m", "initial": "p",
+        "states": {
+            "p": {"initial": "done", "states": {"done": {}}},
+            "q": {"initial": "done", "states": {"done": {}}},
+            "r": {"on": {"X": {"target": "#done"}}},
+        },
+    }
+    e = next(e for e in render_statechart.build_graph(machine)["edges"]
+             if e["event"] == "X")
+    assert e["target"] == "#done", "an ambiguous local name must not be guessed"
+    assert e["unresolved"] is True
+    assert e.get("ambiguous") is True
+
+
+def test_synthetic_events_are_not_indexed():
+    machine = {
+        "id": "m", "initial": "a",
+        "states": {
+            "a": {"always": {"target": "b"}, "after": {"1000": {"target": "b"}}},
+            "b": {"on": {"GO": {"target": "a"}}},
+        },
+    }
+    events = render_statechart.build_graph(machine)["index"]["events"]
+    assert "GO" in events
+    assert not any(e.startswith(("ε(", "after(")) for e in events)
+
+
+# -- 7. richer tooltips: edge meta + state source threaded into the graph -----
+
+def test_transition_meta_is_captured_for_edge_tooltips():
+    """The control-flow lowering puts kind/note/cobolLine on a transition's meta
+    (e.g. 'GO TO - no return', 'AT_END'). That program logic must survive into the
+    graph so the edge tooltip can show it — it was being dropped."""
+    graph = render_statechart.build_graph(_config("banktran"))
+    metas = [e["meta"] for e in graph["edges"] if e.get("meta")]
+    assert metas, "expected transition meta (kind/note/cobolLine) on banktran edges"
+    assert any(m.get("note") == "GO TO - no return" for m in metas)
+    assert any(m.get("kind") == "loop-exit" for m in metas)
+    assert all(("cobolLine" in m or "kind" in m or "note" in m) for m in metas)
+    # and mirrored into the search index so a note like "AT_END" is findable
+    idx_metas = [t["meta"] for t in graph["index"]["transitions"] if t.get("meta")]
+    assert any(m.get("note") == "AT_END" for m in idx_metas)
+
+
+def test_edges_without_meta_stay_clean():
+    """posting transitions carry no meta — the field must be None, not {}."""
+    graph = render_statechart.build_graph(_config("posting"))
+    assert all(e.get("meta") is None for e in graph["edges"])
+
+
+def test_state_level_cobol_line_and_kind_are_surfaced():
+    """banktran states record source as meta.cobolLine / meta.kind (no provenance
+    block). Both must reach the node so the tooltip shows 'line N · GOBACK'."""
+    graph = render_statechart.build_graph(_config("banktran"))
+    end = graph["nodes"]["BANKTRAN.0000-MAIN__end1"]
+    assert end["cobolLine"] == 21
+    assert end["sourceKind"] == "GOBACK"
+
+
+def test_layout_threads_edge_meta_and_node_source():
+    """layout_boot must carry the new fields through ELK flattening to the viewer."""
+    assert "_meta: e.meta" in LAYOUT_JS
+    assert "meta: e._meta" in LAYOUT_JS
+    assert "_cobolLine" in LAYOUT_JS and "_sourceKind" in LAYOUT_JS
+    # leaf box sizing now reserves a row for do-activities (was omitted -> spill)
+    assert "harel.activities" in LAYOUT_JS.split("function leafSize", 1)[1].split("return", 1)[0]
+
+
+# -- 8. final-state labels are visible (inner ring must not occlude) ----------
+
+def test_final_inner_ring_is_unfilled_so_name_shows():
+    """A FILLED inner ring drawn after the name hid every final state's label.
+    The ring must be its own unfilled class, never a filled rect.box."""
+    assert 'kind === "final").append("rect").attr("class", "final-ring")' in VIEWER_JS
+    assert '.attr("fill", "#44506a")' not in VIEWER_JS, "final inner ring must not be filled"
+    ring_rule = VIEWER_CSS.split(".state.final .final-ring", 1)
+    assert len(ring_rule) == 2 and "fill: none" in ring_rule[1].split("}", 1)[0]
+
+
+# -- 9. rich hover tooltips for nodes AND edges -------------------------------
+
+def test_rich_hover_tooltip_exists_for_nodes_and_edges():
+    assert "function nodeTooltipHTML" in VIEWER_JS
+    assert "function edgeTooltipHTML" in VIEWER_JS
+    assert '.attr("id", "tooltip")' in VIEWER_JS
+    assert 'stage.addEventListener("mousemove"' in VIEWER_JS
+    assert "#tooltip" in VIEWER_CSS
+
+
+@pytest.mark.parametrize("label", ["on enter", "on exit", "do (activity)"])
+def test_node_tooltip_exposes_enter_exit_and_do(label):
+    assert label in VIEWER_JS, f"node tooltip must surface '{label}'"
+
+
+def test_edge_tooltip_exposes_actions_and_cobol_note():
+    body = VIEWER_JS.split("function edgeTooltipHTML", 1)[1].split("function boundaryNodeTooltipHTML", 1)[0]
+    assert '"do"' in body and '"note"' in body and "prettyGuard" in body
+
+
+def test_edges_have_wide_hover_hit_area():
+    assert '.attr("class", "hit")' in VIEWER_JS
+    assert ".edge path.hit" in VIEWER_CSS
+
+
+# -- 10. legibility-first initial view (tall COBOL graphs) --------------------
+
+def test_initial_view_is_legibility_first_and_fit_button_kept():
+    assert "function initialView" in VIEWER_JS
+    assert "initialView();" in VIEWER_JS, "load must use the legible initial view"
+    assert "function fit()" in VIEWER_JS, "the Fit button must still frame everything"
+    # Fit button + 'f' key still call fit, not initialView
+    assert 'getElementById("fitBtn").addEventListener("click", fit)' in VIEWER_JS
+
+
+# -- 11. large-graph readability: width clamp, truncation, legible huge view --
+
+def test_leaf_box_width_is_clamped():
+    """A single long COBOL statement must not size a box thousands of px wide and
+    blow up the whole layout (a 397-state machine became an unreadable sliver)."""
+    assert "function leafSize" in LAYOUT_JS
+    assert "MAX_CHARS" in LAYOUT_JS and "Math.min(MAX_CHARS, rawMax)" in LAYOUT_JS
+
+
+def test_long_oncanvas_text_truncated_but_tooltip_keeps_full_text():
+    assert "const trunc =" in VIEWER_JS
+    assert "trunc(d.label" in VIEWER_JS          # state name truncated on canvas
+    assert "trunc(txt, " in VIEWER_JS            # entry/exit/SR compartments truncated
+    # the hover tooltip still shows the COMPLETE entry/exit lists (not truncated)
+    assert "d.entry.map(esc).join" in VIEWER_JS
+    assert "d.exit.map(esc).join" in VIEWER_JS
+
+
+def test_initial_view_stays_legible_on_huge_graphs():
+    body = VIEWER_JS.split("function initialView", 1)[1].split("\n  function ", 1)[0]
+    assert "Math.max(0.7" in body, "oversized graphs must open at a legible zoom floor"
+    assert "vw * k <= sw" in body, (
+        "center on the bbox when it fits the viewport, on the entry region when it doesn't")
