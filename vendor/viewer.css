@@ -2,6 +2,7 @@
    Legibility of structure and semantics is the only aesthetic goal. */
 
 * { box-sizing: border-box; }
+:root { --mono: "SFMono-Regular", "Cascadia Code", "JetBrains Mono", "Consolas", "Roboto Mono", ui-monospace, monospace; }
 html, body { margin: 0; height: 100%; font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; }
 #app { position: fixed; inset: 0; display: flex; flex-direction: column; background: #f7f8fa; color: #1d2330; }
 
@@ -32,7 +33,9 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
    or it paints over the state's name (final states then look like blank boxes). */
 .state.final .final-ring { fill: none; stroke: #44506a; stroke-width: 1.4px; }
 .state .hband { fill: rgba(68,80,106,0.07); }
-.state .name { font-size: 13px; fill: #1d2330; dominant-baseline: hanging;
+/* the state name is the dominant label (sans, bold); COBOL code below it is set
+   in monospace and smaller so the two stop competing */
+.state .name { font-size: 13px; font-weight: 600; fill: #1d2330; dominant-baseline: hanging;
   paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
 .state.container > .name { font-weight: 600; }
 
@@ -65,6 +68,7 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
 .state.role-decision > .name { fill: #8a6a2a; font-weight: 500; font-size: 12px; }
 .state.role-decision .accent { display: inline; fill: #d59a32; }
 .state.role-decision .compartment { fill: #9c8456; }
+.state .decision-mark { fill: #d59a32; opacity: 0.9; }
 
 /* I/O steps = subtle teal cue */
 .state.role-io rect.box { fill: #f3f9f8; stroke: #bcd6d2; }
@@ -80,19 +84,23 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
 /* region divider (orthogonality cue) */
 .region-divider { stroke: #6aa07f; stroke-width: 1.4px; stroke-dasharray: 6 5; }
 
-/* compartments (L3) */
-.compartment { font-size: 11px; fill: #3a4253; }
+/* compartments — COBOL statements, set in monospace as the "code" tier */
+.compartment, .activity-badge, .provenance { font-family: var(--mono); }
+.compartment { font-size: 10px; fill: #44515f; }
 .compartment.entry { fill: #2c6e49; }
 .compartment.exit  { fill: #9a3b3b; }
 .compartment.sr    { fill: #5a3e9a; }
-.activity-badge { font-size: 10px; fill: #6a4b1f; }
-.provenance { font-size: 10px; fill: #5b6577; font-style: italic; }
+.activity-badge { font-size: 9.5px; fill: #6a4b1f; }
+.provenance { font-size: 9.5px; fill: #5b6577; font-style: italic; }
 
 /* edges */
 .edge path { fill: none; stroke: #5b6577; stroke-width: 1.4px; }
-/* wide invisible hover/click target over the thin edge */
-.edge path.hit { stroke: transparent; stroke-width: 14px; fill: none; pointer-events: stroke; }
+/* wide invisible hover/click target over the thin edge — generous so the tooltip
+   is easy to summon without pixel-hunting the 1.4px line */
+.edge path.hit { stroke: transparent; stroke-width: 26px; fill: none; pointer-events: stroke; }
 .edge { cursor: pointer; }
+.bedge path.hit { stroke: transparent; stroke-width: 24px; fill: none; pointer-events: stroke; }
+.bedge { cursor: pointer; }
 /* faint leader tying an offset label to its edge */
 .edge .leader { stroke: #97a3b4; stroke-width: 1px; stroke-dasharray: 3 2; fill: none; opacity: 0.85; }
 .edge.conditional .leader { stroke: #7faec0; }
@@ -103,7 +111,7 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
 .edge.seq path { stroke: #aab2c0; stroke-width: 1.3px; }
 /* conditional (guarded) transitions — decisions, drawn distinctly (teal + dashed) */
 .edge.conditional path { stroke: #1f6f8b; stroke-width: 1.9px; stroke-dasharray: 7 4; }
-.edge .elabel { font-size: 11px; fill: #2b3344;
+.edge .elabel { font-family: var(--mono); font-size: 10.5px; fill: #2b3344;
   paint-order: stroke; stroke: #ffffff; stroke-width: 3px; stroke-linejoin: round; }
 .edge .elabel .ev { font-weight: 600; }
 .edge .elabel .gd { fill: #1a5a72; font-weight: 600; }
