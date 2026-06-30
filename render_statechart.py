@@ -405,6 +405,30 @@ def build_graph(machine):
                 e["ambiguous"] = True  # left unresolved rather than guessed
             e["unresolved"] = isinstance(e["target"], str) and e["target"].startswith("#")
 
+    # Integrity + recovery pass over resolved targets. A bare XState target is
+    # resolved RELATIVE to the source's parent (correct for true siblings). But a
+    # COBOL→XState machine often nests a paragraph's lowered states under the
+    # paragraph, so a cross-paragraph jump (`PERFORM 2100-DEPOSIT`) resolves to a
+    # path that doesn't exist (`…2000-DISPATCH.2100-DEPOSIT` instead of the real
+    # top-level `…2100-DEPOSIT`). That dangling target made the in-browser ELK
+    # layout abort the WHOLE diagram with "Referenced shape does not exist".
+    # Recover it by the unique state whose final name segment matches — COBOL
+    # paragraph names are program-unique, so this reconnects the transition to the
+    # right state. Only flag it unresolved when the name is ambiguous or truly
+    # absent, so a genuinely-broken target is dropped rather than crashing layout.
+    node_ids = set(elk_nodes)
+    for e in edges:
+        tgt = e["target"]
+        if e["internal"] or not isinstance(tgt, str) or tgt.startswith("#") or tgt in node_ids:
+            continue
+        seg = tgt.split(".")[-1]
+        if seg in local and seg not in ambiguous_local:
+            e["target"] = local[seg]          # reconnected to the real state
+            e["recoveredTarget"] = True
+        else:
+            e["unresolved"] = True
+            e["danglingTarget"] = True
+
     io_meta = (machine.get("meta", {}) or {}).get("io", {}) or {}
     boundary = build_external_io(elk_nodes, index, raised, io_meta)
 

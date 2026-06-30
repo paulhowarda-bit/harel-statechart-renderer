@@ -420,3 +420,58 @@ def test_box_size_tiers_by_role():
 def test_edge_hover_hit_area_is_wide_and_inline():
     # width set inline so the per-kind colour rules can't shrink the hit target
     assert '.style("stroke-width", "26px")' in VIEWER_JS
+
+
+# -- 14. target resolution: recover cross-paragraph jumps, never crash layout ---
+
+def test_cross_level_target_is_recovered_to_the_real_state():
+    """A jump to a state that isn't a true sibling (nested COBOL paragraphs) is
+    resolved RELATIVE to a non-existent path; it must be recovered to the unique
+    real state of that name, not left dangling — a dangling endpoint made the
+    in-browser ELK layout abort with 'Referenced shape does not exist'."""
+    machine = {
+        "id": "m", "initial": "A",
+        "states": {
+            "A": {"initial": "A__if1",
+                  "states": {"A__if1": {"on": {"GO": {"target": "B"}}}}},
+            "B": {},
+        },
+    }
+    graph = render_statechart.build_graph(machine)
+    e = next(x for x in graph["edges"] if x["event"] == "GO")
+    assert e["target"] == "m.B", "cross-level target should reconnect to the real state"
+    assert e["target"] in graph["nodes"]
+    assert not e.get("unresolved")
+    assert e.get("recoveredTarget") is True
+
+
+def test_truly_missing_target_is_flagged_not_crashing():
+    machine = {
+        "id": "m", "initial": "a",
+        "states": {"a": {"on": {"GO": {"target": "ghost"}}}, "b": {}},
+    }
+    e = next(x for x in render_statechart.build_graph(machine)["edges"]
+             if x["event"] == "GO")
+    assert e.get("unresolved") is True and e.get("danglingTarget") is True
+
+
+def test_ambiguous_recovery_is_not_guessed():
+    """If the name collides, don't guess — flag it so layout drops it cleanly."""
+    machine = {
+        "id": "m", "initial": "P",
+        "states": {
+            "P": {"initial": "P__if1",
+                  "states": {"P__if1": {"on": {"GO": {"target": "dup"}}}}},
+            "Q": {"initial": "dup", "states": {"dup": {}}},
+            "R": {"initial": "dup", "states": {"dup": {}}},
+        },
+    }
+    e = next(x for x in render_statechart.build_graph(machine)["edges"]
+             if x["event"] == "GO")
+    assert e.get("unresolved") is True
+
+
+def test_layout_skips_edges_with_missing_endpoints():
+    # belt-and-suspenders: even if a target still dangles, ELK must not be handed
+    # an edge whose endpoint isn't a real shape (it would abort the whole layout)
+    assert "containerById[e.source]" in LAYOUT_JS and "containerById[e.target]" in LAYOUT_JS

@@ -166,9 +166,19 @@
       (node.children || []).forEach(indexContainers);
     })(root);
 
+    var droppedEdges = [];
     for (var ei = 0; ei < graph.edges.length; ei++) {
       var e = graph.edges[ei];
       if (e.internal || !e.target || (typeof e.target === "string" && e.target.startsWith("#"))) {
+        continue;
+      }
+      // An edge whose source or target is not an actual node in the tree — e.g. a
+      // transition whose target didn't resolve to a real state — makes ELK abort
+      // the ENTIRE layout with "Referenced shape does not exist". Skip such edges
+      // so the rest of the diagram still renders, and note them in the console.
+      // (containerById indexes every node, leaf and container.)
+      if (!containerById[e.source] || !containerById[e.target]) {
+        droppedEdges.push(e.id + ": " + e.source + " -> " + e.target);
         continue;
       }
       var host = containerById[lca(e.source, e.target)] || root;
@@ -184,6 +194,11 @@
         elkEdge.labels = [{ text: cap, width: Math.min(cap.length, 48) * 6.2 + 4, height: 14 }];
       }
       host.edges.push(elkEdge);
+    }
+    if (droppedEdges.length && typeof console !== "undefined" && console.warn) {
+      console.warn("statechart: skipped " + droppedEdges.length +
+        " transition(s) with an unresolved endpoint (drawn nowhere, but kept in the data):\n  " +
+        droppedEdges.join("\n  "));
     }
 
     var elk = new ELK();
