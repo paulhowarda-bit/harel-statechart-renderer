@@ -84,6 +84,13 @@
     .attr("x", 0).attr("y", 8).attr("width", 4)
     .attr("height", d => Math.max(6, d.height - 16)).attr("rx", 2);
 
+  // Decision marker — a small diamond (the flowchart convention) in the top-right
+  // corner so branch points are recognizable by SHAPE, not colour alone.
+  nodeSel.filter(d => !d.isContainer && stateRole(d) === "decision").append("path")
+    .attr("class", "decision-mark")
+    .attr("d", d => { const cx = d.width - 11, cy = 11, r = 5;
+      return `M${cx},${cy - r} L${cx + r},${cy} L${cx},${cy + r} L${cx - r},${cy} Z`; });
+
   // header band for containers
   nodeSel.filter(d => d.isContainer).append("rect").attr("class", "hband")
     .attr("width", d => d.width).attr("height", 22).attr("rx", 8).attr("ry", 8);
@@ -158,11 +165,27 @@
   });
 
   // ---- draw edges ----
+  // Round the corners of an orthogonal polyline so connectors read as drawn, not
+  // mechanical right angles. Trims each interior bend back by r and arcs through.
+  function roundedPath(pts, r) {
+    if (!pts || !pts.length) return "";
+    if (pts.length <= 2) return "M" + pts.map(p => `${p.x},${p.y}`).join(" L");
+    let d = `M${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p0 = pts[i - 1], p1 = pts[i], p2 = pts[i + 1];
+      const v1x = p0.x - p1.x, v1y = p0.y - p1.y, l1 = Math.hypot(v1x, v1y) || 1;
+      const v2x = p2.x - p1.x, v2y = p2.y - p1.y, l2 = Math.hypot(v2x, v2y) || 1;
+      const rr = Math.min(r, l1 / 2, l2 / 2);
+      d += ` L${(p1.x + v1x / l1 * rr).toFixed(1)},${(p1.y + v1y / l1 * rr).toFixed(1)}`;
+      d += ` Q${p1.x},${p1.y} ${(p1.x + v2x / l2 * rr).toFixed(1)},${(p1.y + v2y / l2 * rr).toFixed(1)}`;
+    }
+    const last = pts[pts.length - 1];
+    return d + ` L${last.x},${last.y}`;
+  }
   function edgePath(e) {
     if (!e.sections || !e.sections.length) return null;
     const s = e.sections[0];
-    let pts = [s.start, ...(s.bends || []), s.end];
-    return "M" + pts.map(p => `${p.x},${p.y}`).join(" L");
+    return roundedPath([s.start, ...(s.bends || []), s.end], 9);
   }
 
   // An "automatic" transition is XState's `always` (and ε/after): it fires on
@@ -180,8 +203,11 @@
     .attr("marker-end", d => d.guard ? "url(#arrow-cond)" : "url(#arrow)");
 
   // A wide, invisible hit area so the 1.4px edge is easy to hover (rich tooltip)
-  // and click (inspector) — not a pixel-perfect target.
-  edgeSel.append("path").attr("class", "hit").attr("d", edgePath);
+  // and click (inspector) — not a pixel-perfect target. Width is set inline so the
+  // per-kind path colour rules (.edge.seq/.conditional path) can't shrink it.
+  edgeSel.append("path").attr("class", "hit").attr("d", edgePath)
+    .style("stroke", "transparent").style("stroke-width", "26px")
+    .style("fill", "none").style("pointer-events", "stroke");
 
   // native tooltip: full transition meaning, available at any zoom level
   edgeSel.append("title").text(tooltipFor);
@@ -325,13 +351,12 @@
     .enter().append("g")
     .attr("class", d => `bedge ${d.direction}${d.unconfirmedEndpoint ? " unconfirmed" : ""}`)
     .attr("data-id", d => d.id);
-  beSel.append("path")
-    .attr("d", d => {
-      const s = d.sections[0];
-      const pts = [s.start].concat(s.bends || [], [s.end]);
-      return "M" + pts.map(p => `${p.x},${p.y}`).join(" L");
-    })
-    .attr("marker-end", "url(#ioarrow)");
+  const bedgePath = d => roundedPath([d.sections[0].start]
+    .concat(d.sections[0].bends || [], [d.sections[0].end]), 9);
+  beSel.append("path").attr("d", bedgePath).attr("marker-end", "url(#ioarrow)");
+  beSel.append("path").attr("class", "hit").attr("d", bedgePath)    // easy-hover target
+    .style("stroke", "transparent").style("stroke-width", "24px")
+    .style("fill", "none").style("pointer-events", "stroke");
   // The field/event is already shown as a per-state in/out badge at the state
   // itself; a second copy mid-rail just collides with the badges and the
   // endpoint boxes. Keep it on hover instead of painting it on the canvas.

@@ -388,3 +388,35 @@ def test_column_wrapping_is_disabled_for_flow_legibility():
     # displaced labels. The clean top-down flow is intentional.
     assert "wrapping.strategy" not in LAYOUT_JS
     assert '"elk.direction": "DOWN"' in LAYOUT_JS
+
+
+# -- 13. design polish: monospace code, rounded edges, decision shape, sizes ---
+
+def test_cobol_code_is_monospace_with_dominant_names():
+    assert "--mono:" in VIEWER_CSS, "a monospace stack must be defined"
+    assert "font-family: var(--mono)" in VIEWER_CSS, "COBOL code text must use it"
+    # edge labels (guards/events/actions are code) are mono too
+    elabel = VIEWER_CSS.split(".edge .elabel {", 1)[1].split("}", 1)[0]
+    assert "var(--mono)" in elabel
+    # the state name stays the dominant sans label
+    assert ".state .name { font-size: 13px; font-weight: 600" in VIEWER_CSS
+
+
+def test_edges_drawn_with_rounded_corners():
+    assert "function roundedPath" in VIEWER_JS
+    assert "roundedPath([s.start" in VIEWER_JS
+
+
+def test_decisions_have_a_shape_cue_not_just_colour():
+    assert 'stateRole(d) === "decision"' in VIEWER_JS
+    assert '"decision-mark"' in VIEWER_JS
+    assert ".state .decision-mark" in VIEWER_CSS
+
+
+def test_box_size_tiers_by_role():
+    assert "ROLE_PADY" in LAYOUT_JS and "function leafRole" in LAYOUT_JS
+
+
+def test_edge_hover_hit_area_is_wide_and_inline():
+    # width set inline so the per-kind colour rules can't shrink the hit target
+    assert '.style("stroke-width", "26px")' in VIEWER_JS

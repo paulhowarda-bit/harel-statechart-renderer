@@ -29,6 +29,20 @@
     // PERFORM entry actions don't overflow the box; height reserves one row per
     // compartment.
     var CHAR_W = 7.2, LINE_H = 18, PAD_X = 16, PAD_Y = 12;
+    // Size tiers by role: real COBOL paragraphs are the larger landmarks; the
+    // generated plumbing is compact (which also trims overall height). Mirrors
+    // the viewer's stateRole so box size and colour agree.
+    var ROLE_PADY = { paragraph: 15, decision: 12, io: 11, plumbing: 9, final: 12 };
+    function leafRole(node) {
+      var label = (node.labels && node.labels[0] && node.labels[0].text) || node.id || "";
+      if (node.kind === "final") return "final";
+      if (label.indexOf("__") === -1) return "paragraph";
+      var m = /__([a-z]+)\d*$/i.exec(label);
+      var k = m ? m[1].toLowerCase() : "";
+      if (/^(if|when|elif|else|eval|case|cond|loop|until)/.test(k)) return "decision";
+      if (/^io/.test(k)) return "io";
+      return "plumbing";
+    }
     function leafSize(node) {
       var lines = [(node.labels && node.labels[0] && node.labels[0].text) || node.id];
       (node.entry || []).forEach(function (a) { lines.push("entry / " + a); });
@@ -46,14 +60,16 @@
       // tooltip; the on-canvas line is truncated to match (see viewer `trunc`).
       var MAX_CHARS = 46;
       var rawMax = lines.reduce(function (m, s) { return Math.max(m, s.length); }, 0);
-      var w = Math.max(70, Math.min(MAX_CHARS, rawMax) * CHAR_W + PAD_X * 2);
+      var role = leafRole(node);
+      var minW = role === "paragraph" ? 104 : (role === "plumbing" ? 66 : 80);
+      var w = Math.max(minW, Math.min(MAX_CHARS, rawMax) * CHAR_W + PAD_X * 2);
       // Reserve one row per visible compartment line. Activities ("do") were
       // previously left out, so a leaf with an activity rendered too short and
       // its badge spilled into the next box — count them here too.
       var rows = (node.entry || []).length + (node.exit || []).length +
         ((node.harel && node.harel.staticReactions) || []).length +
         ((node.harel && node.harel.activities) || []).length;
-      return { w: w, h: LINE_H + PAD_Y * 2 + rows * LINE_H };
+      return { w: w, h: LINE_H + (ROLE_PADY[role] || PAD_Y) * 2 + rows * LINE_H };
     }
 
     var HEADER_H = 22, REGION_PAD = 10;
