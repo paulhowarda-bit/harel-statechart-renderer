@@ -483,3 +483,34 @@ def test_io_endpoints_anchored_to_their_states_not_centered():
     # longer show"). They now sit beside the states they connect to.
     assert "epTargetY" in LAYOUT_JS and "function anchorY" in LAYOUT_JS
     assert "(out.height - total) / 2" not in LAYOUT_JS, "endpoints must not be vertically centered"
+
+
+# -- 15. render by paragraph: collapse/expand grouping ------------------------
+
+def test_paragraph_grouping_detected_for_flat_cobol():
+    g = render_statechart.build_graph(_config("banktran"))
+    gr = g["grouping"]
+    assert gr["enabled"] is True
+    assert "0000-MAIN" in gr["groups"] and "2000-DISPATCH" in gr["groups"]
+    # every member maps back to its paragraph
+    assert all(gr["paragraphOf"][m] == p for p, ms in gr["groups"].items() for m in ms)
+    # the paragraph's entry member is the bare state of that name
+    assert gr["entry"]["0000-MAIN"].split(".")[-1] == "0000-MAIN"
+
+
+def test_paragraph_grouping_disabled_for_nested_machine():
+    assert render_statechart.build_graph(_config("posting"))["grouping"]["enabled"] is False
+
+
+def test_grouping_disabled_when_no_synthetic_states():
+    machine = {"id": "m", "initial": "a",
+               "states": {"a": {"on": {"GO": {"target": "b"}}}, "b": {}}}
+    assert render_statechart.build_graph(machine)["grouping"]["enabled"] is False
+
+
+def test_viewer_has_collapse_expand_machinery():
+    assert "function buildCollapsedGraph" in LAYOUT_JS
+    assert "window.__relayout" in LAYOUT_JS
+    assert "function render()" in VIEWER_JS, "drawing must be re-callable for toggles"
+    assert "function toggleParagraph" in VIEWER_JS
+    assert "collapsed-group" in VIEWER_JS and ".state.collapsed-group" in VIEWER_CSS

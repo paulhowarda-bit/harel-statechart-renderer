@@ -368,8 +368,53 @@ def build_external_io(elk_nodes, index, raised, io_meta):
     }
 
 
+def compute_paragraph_grouping(elk_nodes, root_path):
+    """Group a flat COBOL control-flow machine by paragraph for collapse/expand.
+
+    The COBOL→XState lowering emits each paragraph and each lowered construct
+    (`PARA__if5`, `PARA__seq6`, …) as a TOP-LEVEL sibling. We group them by the
+    paragraph prefix (the text before `__`) so the viewer can render the program
+    as a handful of collapsible paragraph nodes instead of a flat sea of boxes.
+
+    Enabled only for a flat machine (no top-level state is itself a container —
+    so genuinely-nested Harel machines like `posting` are left as-is) that uses
+    the `__` naming. Returns {enabled, order, groups, entry, paragraphOf} or
+    {enabled: False}.
+    """
+    root = elk_nodes.get(root_path)
+    top = (root or {}).get("children", []) if root else []
+    if not top:
+        return {"enabled": False}
+
+    groups, order, any_synth = {}, [], False
+    for cid in top:
+        if elk_nodes[cid].get("children"):
+            return {"enabled": False}            # a nested machine — don't group
+        name = cid.split(".")[-1]
+        para = name.split("__", 1)[0] or name    # "__END__" -> "__END__"
+        if "__" in name:
+            any_synth = True
+        if para not in groups:
+            groups[para] = []
+            order.append(para)
+        groups[para].append(cid)
+    if not any_synth:
+        return {"enabled": False}                # already paragraph-level; nothing to fold
+
+    # The paragraph's entry member is the bare state named exactly like the
+    # paragraph (the PERFORM/fall-through entry point); fall back to the first.
+    entry = {}
+    for para, members in groups.items():
+        entry[para] = next((m for m in members if m.split(".")[-1] == para), members[0])
+
+    paragraph_of = {cid: (cid.split(".")[-1].split("__", 1)[0] or cid.split(".")[-1])
+                    for cid in top}
+    return {"enabled": True, "order": order, "groups": groups,
+            "entry": entry, "paragraphOf": paragraph_of}
+
+
 def build_graph(machine):
-    """XState v5 config dict -> {root, nodes, edges, boundary, index}."""
+    """XState v5 config dict -> {root, nodes, edges, boundary, index, grouping}."""
     root_path = machine.get("id", "root")
     elk_nodes, edges = {}, []
     index = {"states": [], "transitions": [], "events": [], "guards": [],
@@ -431,9 +476,10 @@ def build_graph(machine):
 
     io_meta = (machine.get("meta", {}) or {}).get("io", {}) or {}
     boundary = build_external_io(elk_nodes, index, raised, io_meta)
+    grouping = compute_paragraph_grouping(elk_nodes, root_path)
 
     return {"root": root_path, "nodes": elk_nodes, "edges": edges,
-            "boundary": boundary, "index": index}
+            "boundary": boundary, "index": index, "grouping": grouping}
 
 
 # ===========================================================================

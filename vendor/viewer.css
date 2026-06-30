@@ -81,6 +81,23 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
 .state.role-plumbing .compartment { fill: #9aa4b4; }
 .state.role-plumbing .compartment.entry { fill: #7d9a86; }
 
+/* ---- paragraph collapse / expand ---- */
+/* a collapsed paragraph reads as a clickable "folder" node */
+.state.collapsed-group { cursor: pointer; }
+.state.collapsed-group rect.box { stroke: #4a6fa5; stroke-width: 1.5px;
+  filter: drop-shadow(2px 3px 0 rgba(74,111,165,0.18)); }
+.state.collapsed-group:hover rect.box { stroke: #2f5488; }
+.group-count { font-family: var(--mono); font-size: 9.5px; fill: #6b7a93; }
+/* outline drawn behind an EXPANDED paragraph's internal states */
+.para-group { cursor: pointer; }
+.para-box { fill: rgba(74,111,165,0.05); stroke: #b9c6da; stroke-width: 1.2px;
+  stroke-dasharray: 5 4; }
+.para-group:hover .para-box { stroke: #6f8bb3; fill: rgba(74,111,165,0.09); }
+.para-label { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: #4a6fa5;
+  paint-order: stroke; stroke: #f7f8fa; stroke-width: 3px; stroke-linejoin: round; }
+#bar button.para-btn { border-color: #b9c6da; color: #34507c; }
+#bar button.para-btn:hover { background: #eef3fb; }
+
 /* region divider (orthogonality cue) */
 .region-divider { stroke: #6aa07f; stroke-width: 1.4px; stroke-dasharray: 6 5; }
 

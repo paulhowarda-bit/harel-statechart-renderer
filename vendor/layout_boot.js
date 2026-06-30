@@ -219,6 +219,9 @@
             label: (node.labels && node.labels[0] && node.labels[0].text) || node.id,
             isContainer: !!(node.children && node.children.length),
             ioBadges: graph.nodes[node.id] ? (graph.nodes[node.id].ioBadges || null) : null,
+            isCollapsedGroup: !!(graph.nodes[node.id] && graph.nodes[node.id].isCollapsedGroup),
+            memberCount: graph.nodes[node.id] ? (graph.nodes[node.id].memberCount || 0) : 0,
+            groupParagraph: graph.nodes[node.id] ? (graph.nodes[node.id].groupParagraph || null) : null,
           });
         }
         (node.edges || []).forEach(function (e) {
@@ -343,6 +346,7 @@
       });
       out.boundaryNodes = out.nodes.filter(function (n) { return n.isBoundary; });
       out.index = graph.index;
+      out.grouping = graph.grouping || null;
 
       var minX = 0, maxX = out.width;
       out.nodes.forEach(function (n) {
@@ -353,6 +357,90 @@
 
       return out;
     });
+  }
+
+  // Transform the raw graph for a set of collapsed paragraphs: a collapsed
+  // paragraph becomes ONE node (its internal states + intra-paragraph edges
+  // hidden); cross-paragraph edges are re-pointed at the collapsed node and
+  // de-duplicated. The graph stays flat (all nodes are children of root), so the
+  // existing layout() handles it unchanged. Returns raw untouched when there's
+  // nothing to group (nested/Harel machines).
+  function buildCollapsedGraph(raw, collapsed) {
+    var gr = raw.grouping;
+    if (!gr || !gr.enabled) return raw;
+    var paraOf = gr.paragraphOf, groups = gr.groups, entry = gr.entry;
+    var GRP = function (p) { return "__grp__" + p; };
+
+    var nodes = {};
+    var rootNode = raw.nodes[raw.root], newRoot = {};
+    for (var rk in rootNode) newRoot[rk] = rootNode[rk];
+    newRoot.children = [];
+    nodes[raw.root] = newRoot;
+
+    gr.order.forEach(function (p) {
+      if (collapsed.has(p)) {
+        var members = groups[p], en = raw.nodes[entry[p]] || {};
+        var inB = [], outB = [];
+        members.forEach(function (mid) {
+          var b = raw.nodes[mid].ioBadges; if (!b) return;
+          (b.in || []).forEach(function (x) { inB.push(x); });
+          (b.out || []).forEach(function (x) { outB.push(x); });
+        });
+        var g = {
+          id: GRP(p), labels: [{ text: p }], kind: "basic", depth: 1,
+          harel: { staticReactions: [], activities: [], broadcast: [] },
+          entry: en.entry || [], exit: [], provenance: en.provenance || {},
+          io: { inputs: [], outputs: [] }, children: [],
+          isCollapsedGroup: true, memberCount: members.length,
+          cobolLine: en.cobolLine != null ? en.cobolLine : null,
+          sourceKind: en.sourceKind || null,
+        };
+        if (inB.length || outB.length) g.ioBadges = { in: inB, out: outB };
+        nodes[GRP(p)] = g;
+        newRoot.children.push(GRP(p));
+      } else {
+        groups[p].forEach(function (mid) {
+          var mn = {}, src = raw.nodes[mid];
+          for (var mk in src) mn[mk] = src[mk];
+          mn.groupParagraph = p;
+          nodes[mid] = mn;
+          newRoot.children.push(mid);
+        });
+      }
+    });
+
+    var edges = [], seen = {};
+    raw.edges.forEach(function (e) {
+      if (e.internal) {
+        if (!e.source) return;
+        var spI = paraOf[e.source];
+        edges.push({ id: e.id, source: (spI != null && collapsed.has(spI)) ? GRP(spI) : e.source,
+          target: null, event: e.event, guard: e.guard, actions: e.actions, meta: e.meta, internal: true });
+        return;
+      }
+      if (!e.target || (typeof e.target === "string" && e.target.indexOf("#") === 0)) return;
+      var sp = paraOf[e.source], tp = paraOf[e.target];
+      var ns = (sp != null && collapsed.has(sp)) ? GRP(sp) : e.source;
+      var nt = (tp != null && collapsed.has(tp)) ? GRP(tp) : e.target;
+      if (ns === nt) return;                       // inside a collapsed paragraph — hidden
+      var key = ns + "" + nt + "" + (e.event || "") + "" + (e.guard || "");
+      if (seen[key]) return;
+      seen[key] = 1;
+      edges.push({ id: e.id, source: ns, target: nt, event: e.event,
+        guard: e.guard, actions: e.actions, meta: e.meta, internal: false });
+    });
+
+    var boundary = raw.boundary || { nodes: [], edges: [] }, newB = {};
+    for (var bk in boundary) newB[bk] = boundary[bk];
+    newB.edges = (boundary.edges || []).map(function (be) {
+      var sp = paraOf[be.state];
+      var nb = {}; for (var ek in be) nb[ek] = be[ek];
+      nb.state = (sp != null && collapsed.has(sp)) ? GRP(sp) : be.state;
+      return nb;
+    });
+
+    return { root: raw.root, nodes: nodes, edges: edges, boundary: newB,
+      index: raw.index, grouping: gr };
   }
 
   function boot() {
@@ -367,13 +455,26 @@
       setStatus("Could not parse the embedded graph: " + err.message, true);
       return;
     }
+    // Re-layout entry point the viewer calls on every collapse/expand. `collapsed`
+    // is an array of paragraph names to fold. Returns a promise of the laid-out
+    // graph. Kept here so the (heavy) ELK + flatten logic lives in one place.
+    window.__relayout = function (collapsed) {
+      return layout(buildCollapsedGraph(raw, new Set(collapsed || [])));
+    };
+    window.__grouping = raw.grouping || { enabled: false };
+
+    // Open flat COBOL machines as the paragraph OVERVIEW (everything collapsed);
+    // nested/Harel machines have no paragraphs and render in full as before.
+    var initialCollapsed = (raw.grouping && raw.grouping.enabled)
+      ? raw.grouping.order.slice() : [];
     setStatus("Laying out " + (raw.index ? raw.index.states.length : "?") + " states…", false);
-    layout(raw).then(function (laid) {
+    window.__relayout(initialCollapsed).then(function (laid) {
       window.GRAPH = laid;
+      window.__collapsed = initialCollapsed.slice();
       setStatus(null);
       var code = document.getElementById("viewer-src").textContent;
       // eslint-disable-next-line no-eval
-      (0, eval)(code); // runs the (unmodified) viewer IIFE now that GRAPH exists
+      (0, eval)(code); // runs the viewer IIFE now that GRAPH exists
     }).catch(function (err) {
       setStatus("Layout failed: " + (err && err.message ? err.message : err), true);
       // eslint-disable-next-line no-console
