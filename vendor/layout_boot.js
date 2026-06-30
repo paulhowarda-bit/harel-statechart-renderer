@@ -110,14 +110,20 @@
     }
 
     var root = buildElk(graph.root);
+    // Keep the clean top-to-bottom flow (the diagram's whole value is its reading
+    // order). We earlier tried MULTI_EDGE column-wrapping to fight "very long",
+    // but it broke flow legibility — column jumps, long cross-column connectors,
+    // and labels displaced off their edges. The professional fix for "long" is
+    // visual hierarchy + landmarks (see viewer role styling), not squashing the
+    // aspect ratio. Just keep spacing tight to trim height.
     root.layoutOptions = {
       "elk.algorithm": "layered",
       "elk.direction": "DOWN",
       "elk.hierarchyHandling": "INCLUDE_CHILDREN",
-      "elk.spacing.nodeNode": "36",
-      "elk.layered.spacing.nodeNodeBetweenLayers": "46",
-      "elk.spacing.edgeNode": "16",
-      "elk.spacing.edgeEdge": "12",
+      "elk.spacing.nodeNode": "26",
+      "elk.layered.spacing.nodeNodeBetweenLayers": "32",
+      "elk.spacing.edgeNode": "14",
+      "elk.spacing.edgeEdge": "10",
       "elk.edgeRouting": "ORTHOGONAL",
       "elk.edgeLabels.placement": "CENTER",
       "elk.spacing.edgeLabel": "4",

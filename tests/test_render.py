@@ -360,3 +360,31 @@ def test_initial_view_stays_legible_on_huge_graphs():
     assert "Math.max(0.7" in body, "oversized graphs must open at a legible zoom floor"
     assert "vw * k <= sw" in body, (
         "center on the bbox when it fits the viewport, on the entry region when it doesn't")
+
+
+# -- 12. visual design: role-coded hierarchy, accents, leaders, linear flow ----
+
+def test_states_are_role_classified():
+    assert "function stateRole" in VIEWER_JS
+    assert "role-${stateRole(d)}" in VIEWER_JS
+    for role in ["paragraph", "decision", "io", "plumbing"]:
+        assert f".state.role-{role}" in VIEWER_CSS, f"missing CSS for role {role}"
+
+
+def test_real_paragraphs_emphasized_and_plumbing_recedes():
+    assert ".state.role-paragraph .accent { display: inline" in VIEWER_CSS
+    assert ".state.role-plumbing rect.box" in VIEWER_CSS
+    assert 'attr("class", "accent")' in VIEWER_JS, "states get a left accent bar"
+
+
+def test_edge_labels_have_leaders_to_their_edge():
+    assert "closestOnPolyline" in VIEWER_JS
+    assert '"leader lod-l2"' in VIEWER_JS
+    assert ".edge .leader" in VIEWER_CSS
+
+
+def test_column_wrapping_is_disabled_for_flow_legibility():
+    # MULTI_EDGE wrapping was tried and reverted: it broke reading order and
+    # displaced labels. The clean top-down flow is intentional.
+    assert "wrapping.strategy" not in LAYOUT_JS
+    assert '"elk.direction": "DOWN"' in LAYOUT_JS

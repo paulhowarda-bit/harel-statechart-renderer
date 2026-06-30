@@ -470,16 +470,14 @@ HTML_SHELL = """<!doctype html>
     <div id="inspector"></div>
     <div id="legend">
       <h4>Legend</h4>
-      <div class="li"><span class="sw" style="background:#ffffff"></span>basic state</div>
-      <div class="li"><span class="sw" style="background:#eef3fb"></span>OR-state</div>
-      <div class="li"><span class="sw" style="background:#eaf6ef"></span>AND-state (regions)</div>
-      <div class="li"><span class="sw" style="background:#fff;border-width:2.4px"></span>final state</div>
-      <div class="li">Ⓒ / Ⓒ* shallow / deep history</div>
-      <div class="li">● default entry</div>
-      <div class="li"><span style="color:#1f6f8b;font-weight:700">– –▶</span> conditional transition [guard]</div>
-      <div class="li"><span style="color:#aab2c0;font-weight:700">──▶</span> sequential (unconditional)</div>
-      <div class="li"><span style="color:#b5651d">– – –</span> broadcast / annotation</div>
-      <div class="li"><span style="color:#d98a00">▭</span> search highlight</div>
+      <div class="li"><span class="sw" style="background:#fff;border-color:#4a6fa5;box-shadow:inset 3px 0 0 #4a72b0"></span>COBOL paragraph</div>
+      <div class="li"><span class="sw" style="background:#fff9ed;border-color:#dcb368;box-shadow:inset 3px 0 0 #d59a32"></span>decision (IF / EVALUATE / loop)</div>
+      <div class="li"><span class="sw" style="background:#f3f9f8;border-color:#bcd6d2;box-shadow:inset 3px 0 0 #4f9b91"></span>I/O step</div>
+      <div class="li"><span class="sw" style="background:#f6f8fb;border-color:#d8dfe9"></span>sequential step</div>
+      <div class="li"><span class="sw" style="background:#fff;border-width:2.2px"></span>final · <span class="sw" style="background:#eef3fb;border-color:#9fb2d2"></span>OR · <span class="sw" style="background:#eaf6ef;border-color:#97c6ac"></span>AND</div>
+      <div class="li">Ⓒ / Ⓒ* history · ● default entry</div>
+      <div class="li"><span style="color:#1f6f8b;font-weight:700">– –▶</span> conditional [guard] · <span style="color:#aab2c0;font-weight:700">──▶</span> sequential</div>
+      <div class="li"><span style="color:#b5651d">– – –</span> broadcast · <span style="color:#d98a00">▭</span> search hit</div>
       <div class="semantics" id="semantics"></div>
     </div>
     <div id="minimap"></div>

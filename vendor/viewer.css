@@ -22,16 +22,16 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
   repeating-linear-gradient(0deg,#f7f8fa,#f7f8fa 23px,#eef1f5 24px),
   repeating-linear-gradient(90deg,#f7f8fa,#f7f8fa 23px,#eef1f5 24px); }
 
-/* state boxes */
-.state rect.box { stroke: #44506a; stroke-width: 1.2px; rx: 8px; }
+/* state boxes — softer borders + rounder corners read less "boxy" */
+.state rect.box { stroke: #aab3c2; stroke-width: 1px; rx: 11px; }
 .state.basic rect.box { fill: #ffffff; }
-.state.or   rect.box { fill: #eef3fb; }
-.state.and  rect.box { fill: #eaf6ef; }
-.state.final rect.box { fill: #fff; stroke-width: 2.4px; }
+.state.or   rect.box { fill: #eef3fb; stroke: #9fb2d2; }
+.state.and  rect.box { fill: #eaf6ef; stroke: #97c6ac; }
+.state.final rect.box { fill: #fff; stroke: #44506a; stroke-width: 2.2px; }
 /* final-state inner ring: a thin UNFILLED double-border cue. Must not be filled
    or it paints over the state's name (final states then look like blank boxes). */
 .state.final .final-ring { fill: none; stroke: #44506a; stroke-width: 1.4px; }
-.state .hband { fill: rgba(68,80,106,0.10); }
+.state .hband { fill: rgba(68,80,106,0.07); }
 .state .name { font-size: 13px; fill: #1d2330; dominant-baseline: hanging;
   paint-order: stroke; stroke: #fff; stroke-width: 3px; stroke-linejoin: round; }
 .state.container > .name { font-weight: 600; }
@@ -47,6 +47,35 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
 .state[data-depth="2"] rect.box { fill: #f4f8fd; }
 .state[data-depth="3"] rect.box { fill: #f9fbfe; }
 .state.and[data-depth="1"] rect.box { fill: #e6f4ec; }
+
+/* Role-based visual language — turns a monotonous box ribbon into a navigable
+   flow with landmarks. Real COBOL paragraphs are the structure (blue); decisions
+   (lowered IF/EVALUATE/loop tests) are the branch points (amber); I/O steps get a
+   teal cue; the rest is recessive plumbing. The left "accent" bar is the section
+   marker the eye locks onto. */
+.state .accent { display: none; }
+
+/* real COBOL paragraphs = structural landmarks */
+.state.role-paragraph rect.box { fill: #ffffff; stroke: #4a6fa5; stroke-width: 1.4px; }
+.state.role-paragraph > .name { font-weight: 600; fill: #21314a; }
+.state.role-paragraph .accent { display: inline; fill: #4a72b0; }
+
+/* decisions = branch points, warm accent + faint tint so they pop */
+.state.role-decision rect.box { fill: #fff9ed; stroke: #dcb368; }
+.state.role-decision > .name { fill: #8a6a2a; font-weight: 500; font-size: 12px; }
+.state.role-decision .accent { display: inline; fill: #d59a32; }
+.state.role-decision .compartment { fill: #9c8456; }
+
+/* I/O steps = subtle teal cue */
+.state.role-io rect.box { fill: #f3f9f8; stroke: #bcd6d2; }
+.state.role-io > .name { fill: #46645f; font-size: 12px; }
+.state.role-io .accent { display: inline; fill: #4f9b91; }
+
+/* plumbing (seq / goto / next) = recessive */
+.state.role-plumbing rect.box { fill: #f6f8fb; stroke: #d8dfe9; }
+.state.role-plumbing > .name { fill: #79859a; font-weight: 400; font-size: 12px; }
+.state.role-plumbing .compartment { fill: #9aa4b4; }
+.state.role-plumbing .compartment.entry { fill: #7d9a86; }
 
 /* region divider (orthogonality cue) */
 .region-divider { stroke: #6aa07f; stroke-width: 1.4px; stroke-dasharray: 6 5; }
@@ -64,6 +93,12 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
 /* wide invisible hover/click target over the thin edge */
 .edge path.hit { stroke: transparent; stroke-width: 14px; fill: none; pointer-events: stroke; }
 .edge { cursor: pointer; }
+/* faint leader tying an offset label to its edge */
+.edge .leader { stroke: #97a3b4; stroke-width: 1px; stroke-dasharray: 3 2; fill: none; opacity: 0.85; }
+.edge.conditional .leader { stroke: #7faec0; }
+.edge.match .leader { stroke: #e0b066; opacity: 1; }
+.edge .leader-dot { fill: #97a3b4; }
+.edge.conditional .leader-dot { fill: #7faec0; }
 /* sequential (unconditional `always`) flow — de-emphasized plumbing */
 .edge.seq path { stroke: #aab2c0; stroke-width: 1.3px; }
 /* conditional (guarded) transitions — decisions, drawn distinctly (teal + dashed) */

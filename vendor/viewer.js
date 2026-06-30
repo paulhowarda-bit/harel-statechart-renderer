@@ -44,9 +44,30 @@
   // ---- draw nodes (containers first so children sit on top) ----
   const ordered = G.nodes.slice().sort((a, b) => a.depth - b.depth);
 
+  // A "synthetic" state is one the COBOL→XState lowering generated for control
+  // flow (…__if/__seq/__io/__loop/__iter/__goto/__when…), as opposed to a real
+  // COBOL paragraph. The "__" separator is the marker. Finals keep their own
+  // styling. Used to de-emphasize plumbing so real paragraphs read as structure.
+  const isSynthetic = d => d.label.indexOf("__") !== -1 && d.kind !== "final";
+
+  // Role = the visual-language tier. Real COBOL paragraphs are the structural
+  // landmarks; decision states (lowered IF/EVALUATE/loop tests) are branch points
+  // worth highlighting; everything else is recessive plumbing. Encoding role in
+  // colour/accent turns a monotonous box-ribbon into a navigable flow.
+  function stateRole(d) {
+    if (d.kind === "final") return "final";
+    if (!isSynthetic(d)) return d.isContainer ? "group" : "paragraph";
+    const m = /__([a-z]+)\d*$/i.exec(d.label);
+    const k = m ? m[1].toLowerCase() : "";
+    if (/^(if|when|elif|else|eval|case|cond|loop|until)/.test(k)) return "decision";
+    if (/^io/.test(k)) return "io";
+    return "plumbing";   // seq, iter (loop body), next, goto, cont, end, …
+  }
+
   const nodeSel = gNodes.selectAll("g.state").data(ordered, d => d.id)
     .enter().append("g")
-    .attr("class", d => `state ${d.kind}${d.isContainer ? " container" : ""}`)
+    .attr("class", d => `state ${d.kind}${d.isContainer ? " container" : ""}`
+      + `${isSynthetic(d) ? " synthetic" : ""} role-${stateRole(d)}`)
     .attr("data-depth", d => d.depth)
     .attr("data-id", d => d.id)
     .attr("transform", d => `translate(${d.x},${d.y})`)
@@ -55,6 +76,13 @@
   nodeSel.append("rect").attr("class", "box")
     .attr("width", d => d.width).attr("height", d => d.height)
     .attr("rx", 8).attr("ry", 8);
+
+  // Left accent bar — a "section marker" that gives the flow landmarks: a strong
+  // colour for real paragraphs, a warm one for decisions. Styling/visibility per
+  // role lives in CSS; plumbing states get none.
+  nodeSel.filter(d => !d.isContainer).append("rect").attr("class", "accent")
+    .attr("x", 0).attr("y", 8).attr("width", 4)
+    .attr("height", d => Math.max(6, d.height - 16)).attr("rx", 2);
 
   // header band for containers
   nodeSel.filter(d => d.isContainer).append("rect").attr("class", "hband")
@@ -158,6 +186,23 @@
   // native tooltip: full transition meaning, available at any zoom level
   edgeSel.append("title").text(tooltipFor);
 
+  // nearest point on a polyline to (px,py) — used to tie a label to its edge
+  function closestOnSeg(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+    let t = len2 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    return { x: ax + t * dx, y: ay + t * dy };
+  }
+  function closestOnPolyline(pts, px, py) {
+    let best = null, bd = Infinity;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const c = closestOnSeg(px, py, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+      const d = (c.x - px) ** 2 + (c.y - py) ** 2;
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best ? { pt: best, dist: Math.sqrt(bd) } : null;
+  }
+
   edgeSel.each(function (e) {
     const p = edgePath(e); if (!p) return;
     const s = e.sections[0];
@@ -174,6 +219,18 @@
       lx = mid.x; ly = mid.y - 4; anchor = "middle";
     }
     const g = d3.select(this);
+    // Faint leader from the label to the nearest point on its edge, so it's clear
+    // which transition a caption belongs to when several run in parallel. Only
+    // drawn when the label sits clear of the line (otherwise it's just clutter).
+    const pts = [s.start].concat(s.bends || [], [s.end]);
+    const near = closestOnPolyline(pts, lx, ly - 4);
+    if (near && near.dist > 10) {
+      g.append("line").attr("class", "leader lod-l2")
+        .attr("x1", lx).attr("y1", ly - 4)
+        .attr("x2", near.pt.x).attr("y2", near.pt.y);
+      g.append("circle").attr("class", "leader-dot lod-l2")
+        .attr("cx", near.pt.x).attr("cy", near.pt.y).attr("r", 2);
+    }
     const t = g.append("text").attr("class", "elabel")
       .attr("x", lx).attr("y", ly).attr("text-anchor", anchor);
     if (label.cap) t.append("tspan").attr("class", label.capClass).text(trunc(label.cap, 42));
