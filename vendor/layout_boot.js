@@ -271,13 +271,30 @@
         var d = epDir[bn.endpointId] || { in: 0, out: 0 };
         (d.in >= d.out ? leftEps : rightEps).push(bn);
       });
+      // Anchor each endpoint beside the states it actually connects to (average
+      // of their y-centers) instead of piling every endpoint at the vertical
+      // center. Centered placement left the whole I/O boundary off-screen on tall
+      // graphs once the opening view became top-anchored — the states' inputs and
+      // outputs "disappeared". Now an endpoint for a top-of-flow state sits at the
+      // top (visible at open), and the rest come into view as you read down.
+      var epTargetY = {};
+      boundary.edges.forEach(function (e) {
+        var st = nodeAbs[e.state]; if (!st) return;
+        (epTargetY[e.endpointNode] = epTargetY[e.endpointNode] || []).push(st.y + st.height / 2);
+      });
+      function anchorY(bn) {
+        var ys = epTargetY[bn.id];
+        if (!ys || !ys.length) return out.height / 2;
+        return ys.reduce(function (a, b) { return a + b; }, 0) / ys.length - BN_H / 2;
+      }
       function placeColumn(eps, x) {
-        var total = eps.length * BN_H + Math.max(0, eps.length - 1) * BN_VGAP;
-        var y = (out.height - total) / 2;
+        eps.sort(function (a, b) { return anchorY(a) - anchorY(b); });
+        var prevBottom = -Infinity;
         eps.forEach(function (bn) {
+          var y = Math.max(anchorY(bn), prevBottom + BN_VGAP);   // no overlap
           bn.x = x; bn.y = y; bn.width = BN_W; bn.height = BN_H;
           bn.isBoundary = true;
-          y += BN_H + BN_VGAP;
+          prevBottom = y + BN_H;
           out.nodes.push(bn);
         });
       }

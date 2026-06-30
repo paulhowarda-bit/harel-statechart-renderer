@@ -475,3 +475,11 @@ def test_layout_skips_edges_with_missing_endpoints():
     # belt-and-suspenders: even if a target still dangles, ELK must not be handed
     # an edge whose endpoint isn't a real shape (it would abort the whole layout)
     assert "containerById[e.source]" in LAYOUT_JS and "containerById[e.target]" in LAYOUT_JS
+
+
+def test_io_endpoints_anchored_to_their_states_not_centered():
+    # endpoints used to pile at the vertical center, so on a tall graph the whole
+    # I/O boundary fell outside the top-anchored opening view ("inputs/outputs no
+    # longer show"). They now sit beside the states they connect to.
+    assert "epTargetY" in LAYOUT_JS and "function anchorY" in LAYOUT_JS
+    assert "(out.height - total) / 2" not in LAYOUT_JS, "endpoints must not be vertically centered"
