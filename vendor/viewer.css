@@ -202,6 +202,12 @@ marker#arrow-cond path.condarrowhead { fill: #1f6f8b; }
 .boundary.ep-commarea .ep-box { fill: #b7791f; stroke: #8a5a14; }
 .boundary.ep-caller .ep-box   { fill: #4a5568; stroke: #2d3340; }
 .boundary.ep-external .ep-box { fill: #a0aec0; stroke: #718096; }
+/* kinds derived from COBOL I/O actions (no meta.io) */
+.boundary.ep-file .ep-box       { fill: #2c7a4b; stroke: #1d5435; }
+.boundary.ep-subprogram .ep-box { fill: #4a5568; stroke: #2d3340; }
+.boundary.ep-console .ep-box    { fill: #6b5b95; stroke: #4a3f6b; }
+.boundary.ep-file .ep-label, .boundary.ep-subprogram .ep-label,
+.boundary.ep-console .ep-label { fill: #fff; }
 .boundary.ep-cics .ep-label, .boundary.ep-db2 .ep-label,
 .boundary.ep-vsam .ep-label, .boundary.ep-commarea .ep-label,
 .boundary.ep-caller .ep-label { fill: #fff; }

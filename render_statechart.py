@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import webbrowser
 from pathlib import Path
@@ -273,6 +274,59 @@ def walk(node, path, elk_nodes, edges, index, depth, raised):
     return elk_node
 
 
+_IO_NAME = r'([A-Z0-9$#@][A-Z0-9$#@._-]*)'
+
+
+def _classify_io_action(a):
+    """Recognize an I/O operation captured as an action and map it to an external
+    endpoint. Returns (endpoint_id, kind, endpoint_label, direction, edge_label) or
+    None. Direction is 'in' (into the program) or 'out'. OPEN/CLOSE are lifecycle,
+    not data flow, so a bare CLOSE (or OPEN without a mode) yields nothing —
+    READ/WRITE of the same file already surface it."""
+    u = str(a).strip().upper()
+    m = re.match(r'(?:EXEC\s+)?CALL[ _]+' + _IO_NAME, u)
+    if m:
+        return ("call:" + m.group(1), "subprogram", m.group(1), "out", "CALL " + m.group(1))
+    if u.startswith("DISPLAY"):
+        return ("console", "console", "console (SYSOUT)", "out", "DISPLAY")
+    if u.startswith("ACCEPT"):
+        return ("console", "console", "console (SYSIN)", "in", "ACCEPT")
+    m = re.match(r'OPEN[ _]+(INPUT|OUTPUT|I-O|EXTEND)[ _]+' + _IO_NAME, u)
+    if m:
+        d = "in" if m.group(1) == "INPUT" else "out"
+        return ("file:" + m.group(2), "file", m.group(2), d, "OPEN " + m.group(1))
+    m = re.match(r'(READ|WRITE|REWRITE|DELETE|START)[ _]+' + _IO_NAME, u)
+    if m:
+        d = "in" if m.group(1) in ("READ", "START") else "out"
+        return ("file:" + m.group(2), "file", m.group(2), d, m.group(1) + " " + m.group(2))
+    return None
+
+
+def derive_io_from_actions(elk_nodes):
+    """Synthesize the external I/O boundary from I/O verbs captured as entry/exit
+    actions, for machines that carry no `meta.io` (the COBOL→XState lowering emits
+    I/O as actions like `read_TRAN-FILE` / `call_POSTLOG` / `DISPLAY_…`, not as the
+    structured boundary). Populates each state's `io.inputs/outputs` and returns the
+    derived endpoint list, so the input/output events render as endpoints + arrows
+    instead of buried action text. Heuristic — keyed on COBOL I/O verb names."""
+    endpoints = {}
+    for n in elk_nodes.values():
+        refs_in, refs_out = [], []
+        for a in (n.get("entry") or []) + (n.get("exit") or []):
+            c = _classify_io_action(a)
+            if not c:
+                continue
+            ep_id, kind, ep_label, direction, edge_label = c
+            endpoints.setdefault(ep_id, {"id": ep_id, "kind": kind, "label": ep_label})
+            (refs_in if direction == "in" else refs_out).append(
+                {"event": edge_label, "endpoint": ep_id})
+        if refs_in or refs_out:
+            io = n.setdefault("io", {"inputs": [], "outputs": []})
+            io.setdefault("inputs", []).extend(refs_in)
+            io.setdefault("outputs", []).extend(refs_out)
+    return list(endpoints.values())
+
+
 def build_external_io(elk_nodes, index, raised, io_meta):
     endpoints = {}
     for ep in io_meta.get("endpoints", []):
@@ -475,6 +529,12 @@ def build_graph(machine):
             e["danglingTarget"] = True
 
     io_meta = (machine.get("meta", {}) or {}).get("io", {}) or {}
+    if not io_meta.get("endpoints") and not io_meta.get("fields"):
+        derived = derive_io_from_actions(elk_nodes)   # COBOL machines: I/O is in actions
+        if derived:
+            io_meta = dict(io_meta)
+            io_meta["endpoints"] = derived
+            io_meta["derivedFromActions"] = True
     boundary = build_external_io(elk_nodes, index, raised, io_meta)
     grouping = compute_paragraph_grouping(elk_nodes, root_path)
 

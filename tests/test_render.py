@@ -516,6 +516,36 @@ def test_viewer_has_collapse_expand_machinery():
     assert "collapsed-group" in VIEWER_JS and ".state.collapsed-group" in VIEWER_CSS
 
 
+def test_classify_io_action():
+    f = render_statechart._classify_io_action
+    assert f("read_TRAN-FILE")[1] == "file" and f("read_TRAN-FILE")[3] == "in"
+    assert f("WRITE_LEDGER")[3] == "out"
+    assert f("call_POSTLOG")[1] == "subprogram" and f("call_POSTLOG")[3] == "out"
+    assert f("DISPLAY_INQUIRY")[1] == "console" and f("DISPLAY_INQUIRY")[3] == "out"
+    assert f("CLOSE_TRAN-FILE") is None          # lifecycle, not data flow
+    assert f("ADD_1_TO_WS-COUNT") is None         # not I/O
+
+
+def test_io_boundary_derived_from_actions_when_no_meta_io():
+    # COBOL machines emit I/O as actions (read_/call_/DISPLAY…), not meta.io — the
+    # external input/output events must still render as an endpoint boundary.
+    g = render_statechart.build_graph(_config("banktran"))
+    assert g["boundary"]["nodes"], "expected a derived I/O boundary"
+    kinds = {n["kind"] for n in g["boundary"]["nodes"]}
+    labels = {n["label"] for n in g["boundary"]["nodes"]}
+    assert {"file", "subprogram", "console"} <= kinds
+    assert "TRAN-FILE" in labels and "POSTLOG" in labels
+    dirs = {(e["label"].split()[0], e["direction"]) for e in g["boundary"]["edges"]}
+    assert ("READ", "in") in dirs and ("CALL", "out") in dirs and ("DISPLAY", "out") in dirs
+
+
+def test_hand_authored_meta_io_is_not_overridden_by_derivation():
+    g = render_statechart.build_graph(_config("posting"))
+    labels = {n["label"] for n in g["boundary"]["nodes"]}
+    assert "CICS (terminal in)" in labels        # kept its own endpoints
+    assert "TRAN-FILE" not in labels             # no action-derivation happened
+
+
 def test_opens_fully_expanded_with_paragraph_boxes():
     # each paragraph is a real container BOX and the diagram opens fully expanded;
     # clicking a box contracts it. (Not a collapsed overview.)
