@@ -220,6 +220,7 @@
             isContainer: !!(node.children && node.children.length),
             ioBadges: graph.nodes[node.id] ? (graph.nodes[node.id].ioBadges || null) : null,
             isCollapsedGroup: !!(graph.nodes[node.id] && graph.nodes[node.id].isCollapsedGroup),
+            isParagraphBox: !!(graph.nodes[node.id] && graph.nodes[node.id].isParagraphBox),
             memberCount: graph.nodes[node.id] ? (graph.nodes[node.id].memberCount || 0) : 0,
             groupParagraph: graph.nodes[node.id] ? (graph.nodes[node.id].groupParagraph || null) : null,
           });
@@ -370,6 +371,14 @@
     if (!gr || !gr.enabled) return raw;
     var paraOf = gr.paragraphOf, groups = gr.groups, entry = gr.entry;
     var GRP = function (p) { return "__grp__" + p; };
+    var leaf = function (id) { return id.split(".").pop(); };
+    var repath = function (id) { return GRP(paraOf[id]) + "." + leaf(id); };
+    // original top-level id -> its id in the transformed graph
+    var mapId = function (id) {
+      var p = paraOf[id];
+      if (p == null) return id;
+      return collapsed.has(p) ? GRP(p) : repath(id);
+    };
 
     var nodes = {};
     var rootNode = raw.nodes[raw.root], newRoot = {};
@@ -399,12 +408,21 @@
         nodes[GRP(p)] = g;
         newRoot.children.push(GRP(p));
       } else {
+        // expanded: a container BOX around the paragraph's member states
+        var container = {
+          id: GRP(p), labels: [{ text: p }], kind: "or", depth: 1,
+          harel: { staticReactions: [], activities: [], broadcast: [] },
+          entry: [], exit: [], provenance: {}, io: { inputs: [], outputs: [] },
+          children: [], initial: repath(entry[p]), isParagraphBox: true,
+        };
+        nodes[GRP(p)] = container;
+        newRoot.children.push(GRP(p));
         groups[p].forEach(function (mid) {
           var mn = {}, src = raw.nodes[mid];
           for (var mk in src) mn[mk] = src[mk];
-          mn.groupParagraph = p;
-          nodes[mid] = mn;
-          newRoot.children.push(mid);
+          mn.id = repath(mid); mn.depth = 2; mn.children = []; mn.groupParagraph = p;
+          nodes[mn.id] = mn;
+          container.children.push(mn.id);
         });
       }
     });
@@ -413,15 +431,12 @@
     raw.edges.forEach(function (e) {
       if (e.internal) {
         if (!e.source) return;
-        var spI = paraOf[e.source];
-        edges.push({ id: e.id, source: (spI != null && collapsed.has(spI)) ? GRP(spI) : e.source,
-          target: null, event: e.event, guard: e.guard, actions: e.actions, meta: e.meta, internal: true });
+        edges.push({ id: e.id, source: mapId(e.source), target: null,
+          event: e.event, guard: e.guard, actions: e.actions, meta: e.meta, internal: true });
         return;
       }
       if (!e.target || (typeof e.target === "string" && e.target.indexOf("#") === 0)) return;
-      var sp = paraOf[e.source], tp = paraOf[e.target];
-      var ns = (sp != null && collapsed.has(sp)) ? GRP(sp) : e.source;
-      var nt = (tp != null && collapsed.has(tp)) ? GRP(tp) : e.target;
+      var ns = mapId(e.source), nt = mapId(e.target);
       if (ns === nt) return;                       // inside a collapsed paragraph — hidden
       var key = ns + "" + nt + "" + (e.event || "") + "" + (e.guard || "");
       if (seen[key]) return;
@@ -433,9 +448,8 @@
     var boundary = raw.boundary || { nodes: [], edges: [] }, newB = {};
     for (var bk in boundary) newB[bk] = boundary[bk];
     newB.edges = (boundary.edges || []).map(function (be) {
-      var sp = paraOf[be.state];
       var nb = {}; for (var ek in be) nb[ek] = be[ek];
-      nb.state = (sp != null && collapsed.has(sp)) ? GRP(sp) : be.state;
+      nb.state = mapId(be.state);
       return nb;
     });
 
@@ -463,10 +477,9 @@
     };
     window.__grouping = raw.grouping || { enabled: false };
 
-    // Open flat COBOL machines as the paragraph OVERVIEW (everything collapsed);
-    // nested/Harel machines have no paragraphs and render in full as before.
-    var initialCollapsed = (raw.grouping && raw.grouping.enabled)
-      ? raw.grouping.order.slice() : [];
+    // Open FULLY EXPANDED (every paragraph a box with its states inside) — the
+    // full detail, just grouped. Click a box to contract it. Nothing collapsed.
+    var initialCollapsed = [];
     setStatus("Laying out " + (raw.index ? raw.index.states.length : "?") + " states…", false);
     window.__relayout(initialCollapsed).then(function (laid) {
       window.GRAPH = laid;

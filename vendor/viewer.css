@@ -88,13 +88,12 @@ svg#canvas { width: 100%; height: 100%; display: block; background:
   filter: drop-shadow(2px 3px 0 rgba(74,111,165,0.18)); }
 .state.collapsed-group:hover rect.box { stroke: #2f5488; }
 .group-count { font-family: var(--mono); font-size: 9.5px; fill: #6b7a93; }
-/* outline drawn behind an EXPANDED paragraph's internal states */
-.para-group { cursor: pointer; }
-.para-box { fill: rgba(74,111,165,0.05); stroke: #b9c6da; stroke-width: 1.2px;
-  stroke-dasharray: 5 4; }
-.para-group:hover .para-box { stroke: #6f8bb3; fill: rgba(74,111,165,0.09); }
-.para-label { font-family: var(--mono); font-size: 11px; font-weight: 600; fill: #4a6fa5;
-  paint-order: stroke; stroke: #f7f8fa; stroke-width: 3px; stroke-linejoin: round; }
+/* an EXPANDED paragraph is a large faint background box; click it to contract */
+.state.paragraph-box { cursor: pointer; }
+.state.paragraph-box > rect.box { fill: rgba(74,111,165,0.045); stroke: #c3d0e2; stroke-width: 1.2px; }
+.state.paragraph-box > .hband { fill: rgba(74,111,165,0.10); }
+.state.paragraph-box:hover > rect.box { fill: rgba(74,111,165,0.085); stroke: #8ea6c8; }
+.state.paragraph-box > .name { fill: #34507c; font-weight: 600; }
 #bar button.para-btn { border-color: #b9c6da; color: #34507c; }
 #bar button.para-btn:hover { background: #eef3fb; }
 

@@ -132,36 +132,20 @@
     G.nodes.forEach(n => nodeById[n.id] = n);
     [gGroups, gNodes, gBoundary, gBoundaryEdges, gEdges, gAnnot].forEach(g => g.selectAll("*").remove());
 
-    // outline + collapse affordance behind each EXPANDED paragraph's members
-    if (G.grouping && G.grouping.enabled) {
-      const byPara = {};
-      G.nodes.forEach(n => { if (n.groupParagraph) (byPara[n.groupParagraph] = byPara[n.groupParagraph] || []).push(n); });
-      Object.keys(byPara).forEach(p => {
-        const ms = byPara[p];
-        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        ms.forEach(n => { x0 = Math.min(x0, n.x); y0 = Math.min(y0, n.y); x1 = Math.max(x1, n.x + n.width); y1 = Math.max(y1, n.y + n.height); });
-        const pad = 14;
-        const g = gGroups.append("g").attr("class", "para-group")
-          .on("click", (ev) => { ev.stopPropagation(); toggleParagraph(p); });
-        g.append("rect").attr("class", "para-box")
-          .attr("x", x0 - pad).attr("y", y0 - pad - 16)
-          .attr("width", (x1 - x0) + pad * 2).attr("height", (y1 - y0) + pad * 2 + 16).attr("rx", 10);
-        g.append("text").attr("class", "para-label")
-          .attr("x", x0 - pad + 8).attr("y", y0 - pad - 3).text("▾ " + p);
-      });
-    }
-
     const ordered = G.nodes.slice().sort((a, b) => a.depth - b.depth);
     const nodeSel = gNodes.selectAll("g.state").data(ordered, d => d.id)
       .enter().append("g")
       .attr("class", d => `state ${d.kind}${d.isContainer ? " container" : ""}`
-        + `${isSynthetic(d) ? " synthetic" : ""}${d.isCollapsedGroup ? " collapsed-group" : ""} role-${stateRole(d)}`)
+        + `${isSynthetic(d) ? " synthetic" : ""}${d.isCollapsedGroup ? " collapsed-group" : ""}`
+        + `${d.isParagraphBox ? " paragraph-box" : ""} role-${stateRole(d)}`)
       .attr("data-depth", d => d.depth)
       .attr("data-id", d => d.id)
       .attr("transform", d => `translate(${d.x},${d.y})`)
       .on("click", (ev, d) => {
         ev.stopPropagation();
-        if (d.isCollapsedGroup) toggleParagraph(d.label);   // click a paragraph → expand
+        // click a collapsed paragraph → expand it; click inside an expanded
+        // paragraph box (its background/header, not a child state) → contract it
+        if (d.isCollapsedGroup || d.isParagraphBox) toggleParagraph(d.label);
         else inspectState(d);
       });
 
@@ -239,8 +223,8 @@
       }
     });
 
-    // double-click a container → zoom to its subtree bbox
-    nodeSel.filter(d => d.isContainer).on("dblclick", (ev, d) => {
+    // double-click a (non-paragraph) container → zoom to its subtree bbox
+    nodeSel.filter(d => d.isContainer && !d.isParagraphBox).on("dblclick", (ev, d) => {
       ev.stopPropagation();
       const sw = stage.clientWidth, sh = stage.clientHeight;
       const pad = 30, k = Math.min(sw / (d.width + pad * 2), sh / (d.height + pad * 2));

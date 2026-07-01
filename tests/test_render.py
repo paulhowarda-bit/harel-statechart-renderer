@@ -514,3 +514,11 @@ def test_viewer_has_collapse_expand_machinery():
     assert "function render()" in VIEWER_JS, "drawing must be re-callable for toggles"
     assert "function toggleParagraph" in VIEWER_JS
     assert "collapsed-group" in VIEWER_JS and ".state.collapsed-group" in VIEWER_CSS
+
+
+def test_opens_fully_expanded_with_paragraph_boxes():
+    # each paragraph is a real container BOX and the diagram opens fully expanded;
+    # clicking a box contracts it. (Not a collapsed overview.)
+    assert "var initialCollapsed = [];" in LAYOUT_JS, "must open fully expanded"
+    assert "isParagraphBox" in LAYOUT_JS and "paragraph-box" in VIEWER_JS
+    assert ".state.paragraph-box" in VIEWER_CSS
