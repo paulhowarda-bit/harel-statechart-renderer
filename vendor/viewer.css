@@ -207,8 +207,10 @@ marker#arrow-cond path.condarrowhead { fill: #1f6f8b; }
 .boundary.ep-file .ep-box       { fill: #2c7a4b; stroke: #1d5435; }
 .boundary.ep-subprogram .ep-box { fill: #4a5568; stroke: #2d3340; }
 .boundary.ep-console .ep-box    { fill: #6b5b95; stroke: #4a3f6b; }
+.boundary.ep-condition .ep-box  { fill: #b7410e; stroke: #7c2d09; }  /* CICS/SQL condition */
 .boundary.ep-parameter .ep-label, .boundary.ep-file .ep-label,
-.boundary.ep-subprogram .ep-label, .boundary.ep-console .ep-label { fill: #fff; }
+.boundary.ep-subprogram .ep-label, .boundary.ep-console .ep-label,
+.boundary.ep-condition .ep-label { fill: #fff; }
 .boundary.ep-cics .ep-label, .boundary.ep-db2 .ep-label,
 .boundary.ep-vsam .ep-label, .boundary.ep-commarea .ep-label,
 .boundary.ep-caller .ep-label { fill: #fff; }

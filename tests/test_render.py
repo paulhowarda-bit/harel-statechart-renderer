@@ -526,6 +526,34 @@ def test_classify_io_action():
     assert f("ADD_1_TO_WS-COUNT") is None         # not I/O
 
 
+def test_interface_section_drives_the_perimeter():
+    # the generator's structured `interface` is authoritative: real endpoint names
+    # (Db2 tables, programs) with events tied to their state and direction.
+    machine = {"id": "P", "initial": "look",
+               "states": {"look": {"always": {"target": "done"}}, "done": {"type": "final"}}}
+    interface = {
+        "endpoints": [{"endpoint": "CUST", "type": "db2", "directions": ["get"]},
+                      {"endpoint": "POSTLOG", "type": "program", "directions": ["create"]}],
+        "events": [{"endpoint": "CUST", "direction": "get", "verb": "SELECT", "state": "look"},
+                   {"endpoint": "POSTLOG", "direction": "create", "verb": "CICS LINK", "state": "look"}],
+    }
+    g = render_statechart.build_graph(machine, interface=interface)
+    assert {n["label"]: n["kind"] for n in g["boundary"]["nodes"]} == \
+        {"CUST": "db2", "POSTLOG": "subprogram"}
+    dirs = {(e["endpoint"], e["direction"]) for e in g["boundary"]["edges"]}
+    assert ("if:CUST", "in") in dirs and ("if:POSTLOG", "out") in dirs
+
+
+def test_interface_resolves_states_nested_in_parallel_regions():
+    # events name a state by bare name, but it lives under a region container
+    machine = {"id": "P", "type": "parallel",
+               "states": {"R": {"states": {"look": {}}}}}
+    interface = {"endpoints": [{"endpoint": "T", "type": "db2"}],
+                 "events": [{"endpoint": "T", "direction": "get", "verb": "SELECT", "state": "look"}]}
+    g = render_statechart.build_graph(machine, interface=interface)
+    assert any(e["endpoint"] == "if:T" for e in g["boundary"]["edges"])
+
+
 def test_classify_sql_cics_link_actions():
     f = render_statechart._classify_io_action
     assert f("exec_sql_select")[1] == "db2" and f("exec_sql_select")[3] == "in"

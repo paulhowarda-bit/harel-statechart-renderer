@@ -417,7 +417,9 @@ def build_external_io(elk_nodes, index, raised, io_meta):
                 })
 
     declared_input_events = {be["event"] for be in boundary_edges if be["event"]}
-    for ev in external_inputs:
+    # skip the "unspecified external input" guesswork when the generator's
+    # interface already gave us the authoritative perimeter.
+    for ev in ([] if io_meta.get("fromInterface") else external_inputs):
         if ev in declared_input_events:
             continue
         bn = ensure_boundary("__unspecified_in__")
@@ -579,10 +581,58 @@ def derive_perimeter_params(data, semantics, elk_nodes, root_path, machine):
     return endpoints
 
 
-def build_graph(machine, data=None, semantics=None):
+def build_io_from_interface(interface, elk_nodes, root_path, machine):
+    """Consume the generator's structured `interface` section — the authoritative
+    external perimeter: named endpoints (real Db2 tables, called programs, files,
+    console) plus I/O events each tied to the state where they happen (with the raw
+    COBOL). Preferred over the heuristic action/LINKAGE derivations when present."""
+    kmap = {"db2": "db2", "program": "subprogram", "console": "console",
+            "condition": "condition", "vsam": "file", "qsam": "file", "file": "file",
+            "cics": "cics", "terminal": "cics", "commarea": "commarea", "caller": "caller"}
+    endpoints = {}
+    for ep in (interface.get("endpoints") or []):
+        eid = ep.get("endpoint")
+        if eid:
+            endpoints[eid] = {"id": "if:" + eid, "label": eid,
+                              "kind": kmap.get(str(ep.get("type", "")).lower(),
+                                               ep.get("type") or "external")}
+    # An event names its state by bare name, but the state may be nested under a
+    # region container in a parallel machine (CICSINQ.PROGRAM.1000-LOOKUP), so
+    # resolve by the unique final path segment (COBOL paragraph names are unique).
+    by_seg, ambiguous = {}, set()
+    for path in elk_nodes:
+        seg = path.split(".")[-1]
+        if seg in by_seg:
+            ambiguous.add(seg)
+        else:
+            by_seg[seg] = path
+
+    def resolve(state):
+        if not state:
+            return None
+        full = f"{root_path}.{state}"
+        if full in elk_nodes:
+            return full
+        return by_seg.get(state) if state not in ambiguous else None
+
+    for ev in (interface.get("events") or []):
+        eid = ev.get("endpoint")
+        node = elk_nodes.get(resolve(ev.get("state")) or "")
+        if eid not in endpoints or not node:
+            continue
+        direction = "in" if str(ev.get("direction", "")).lower() in ("get", "read", "in") else "out"
+        label = ev.get("verb") or ev.get("event") or eid
+        io = node.setdefault("io", {"inputs": [], "outputs": []})
+        io.setdefault("inputs" if direction == "in" else "outputs", []).append(
+            {"event": label, "endpoint": "if:" + eid})
+    return list(endpoints.values())
+
+
+def build_graph(machine, data=None, semantics=None, interface=None):
     """XState v5 config dict -> {root, nodes, edges, boundary, index, grouping}.
-    `data`/`semantics` (from the cobol-xstate bundle) drive the external perimeter
-    (LINKAGE parameters) when the machine carries no meta.io."""
+    The external perimeter comes from the generator's `interface` section when
+    present (real endpoints/events); otherwise it's derived from the LINKAGE
+    section + I/O actions, when the machine carries no hand-authored meta.io."""
     root_path = machine.get("id", "root")
     elk_nodes, edges = {}, []
     index = {"states": [], "transitions": [], "events": [], "guards": [],
@@ -643,9 +693,13 @@ def build_graph(machine, data=None, semantics=None):
             e["danglingTarget"] = True
 
     io_meta = (machine.get("meta", {}) or {}).get("io", {}) or {}
-    if not io_meta.get("endpoints") and not io_meta.get("fields"):
-        # COBOL machines carry no meta.io — the perimeter is in the actions
-        # (files/CALL/DISPLAY) and the LINKAGE section (input/output parameters).
+    if interface and interface.get("endpoints"):
+        # the generator's structured perimeter — authoritative (real table names)
+        io_meta = {"endpoints": build_io_from_interface(interface, elk_nodes, root_path, machine),
+                   "fromInterface": True}
+    elif not io_meta.get("endpoints") and not io_meta.get("fields"):
+        # older bundles carry no interface — derive the perimeter from the LINKAGE
+        # section (parameters) and the I/O actions (files/CALL/DISPLAY/SQL/CICS).
         derived = derive_io_from_actions(elk_nodes)
         derived += derive_perimeter_params(data, semantics, elk_nodes, root_path, machine)
         if derived:
@@ -740,8 +794,8 @@ HTML_SHELL = """<!doctype html>
 """
 
 
-def render_html(machine, title=None, data=None, semantics=None):
-    graph = build_graph(machine, data, semantics)
+def render_html(machine, title=None, data=None, semantics=None, interface=None):
+    graph = build_graph(machine, data, semantics, interface)
     css, _ = read_vendor("viewer.css")
     viewer, _ = read_vendor("viewer.js")
     boot, _ = read_vendor("layout_boot.js")
@@ -851,7 +905,9 @@ def main(argv=None):
     # `machine`; they drive the external perimeter (LINKAGE params) and provenance.
     data = doc.get("data") if isinstance(doc, dict) else None
     semantics = doc.get("semantics") if isinstance(doc, dict) else None
-    html, graph, used_cdn = render_html(machine, title=args.title, data=data, semantics=semantics)
+    interface = doc.get("interface") if isinstance(doc, dict) else None
+    html, graph, used_cdn = render_html(machine, title=args.title, data=data,
+                                        semantics=semantics, interface=interface)
     with open(out, "w", encoding="utf-8") as f:
         f.write(html)
 
