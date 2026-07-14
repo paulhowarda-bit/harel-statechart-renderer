@@ -15,10 +15,15 @@ Derive the program's I/O boundary from the captured data, since COBOL machines
 carry no `meta.io`.
 - **Done:** LINKAGE parameters as input/output endpoints (direction from data
   flow); file `READ`/`WRITE`/`OPEN`; `CALL` subprograms; `DISPLAY`/`ACCEPT`
-  console.
-- **TODO:** `EXEC SQL` → Db2 tables (SELECT/INSERT/UPDATE/DELETE); `EXEC CICS`
-  (SEND/RECEIVE, file control); bulk load / unload. Needs a program that actually
-  uses these so we can see how the generator represents them.
+  console; `EXEC SQL` → generic **Db2** endpoint; `EXEC CICS LINK`/`XCTL` →
+  subprogram; `SEND`/`RECEIVE` → CICS terminal. Also: runnable `.mjs` modules are
+  now renderable (config extracted from `machineConfig`).
+- **TODO — SQL table names:** the runnable `.mjs` flattens `EXEC SQL SELECT … FROM
+  CUST` to a bare `exec_sql_select`, so we can only show a *generic* Db2 endpoint,
+  not the table `CUST` or the host variables. The JSON **bundle** (with
+  `semantics`) carries the statement/host-vars — surface the actual tables from
+  there once a SQL program is emitted as a bundle. Same for `EXEC CICS` file
+  control datasets and bulk load/unload.
 
 ## Business-state view (the real goal)
 Project the technical control-flow up to a **business** state model: choose a

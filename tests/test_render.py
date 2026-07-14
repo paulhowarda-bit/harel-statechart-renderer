@@ -526,6 +526,25 @@ def test_classify_io_action():
     assert f("ADD_1_TO_WS-COUNT") is None         # not I/O
 
 
+def test_classify_sql_cics_link_actions():
+    f = render_statechart._classify_io_action
+    assert f("exec_sql_select")[1] == "db2" and f("exec_sql_select")[3] == "in"
+    assert f("exec_sql_insert")[3] == "out"
+    assert f("link_POSTLOG")[1] == "subprogram" and f("link_POSTLOG")[2] == "POSTLOG"
+    assert f("EXEC_CICS_LINK_POSTLOG")[1] == "subprogram"
+    assert f("exec_cics_handle") is None          # control flow, not I/O
+
+
+def test_mjs_runnable_module_is_renderable():
+    text = ('export const machineConfig = {"id":"M","initial":"a","states":'
+            '{"a":{"entry":["exec_sql_select"],"always":{"target":"z"}},'
+            '"z":{"type":"final"}}};\nexport const machine = 1;')
+    doc = render_statechart._load_doc(text)
+    assert doc["id"] == "M"
+    g = render_statechart.build_graph(render_statechart.extract_machine(doc))
+    assert any(n["kind"] == "db2" for n in g["boundary"]["nodes"])
+
+
 def test_io_boundary_derived_from_actions_when_no_meta_io():
     # COBOL machines emit I/O as actions (read_/call_/DISPLAY…), not meta.io — the
     # external input/output events must still render as an endpoint boundary.

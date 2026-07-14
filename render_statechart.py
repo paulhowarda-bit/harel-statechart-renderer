@@ -284,6 +284,29 @@ def _classify_io_action(a):
     not data flow, so a bare CLOSE (or OPEN without a mode) yields nothing —
     READ/WRITE of the same file already surface it."""
     u = str(a).strip().upper()
+    # EXEC SQL <verb> -> Db2. (The runnable .mjs flattens the statement, so the
+    # table is unknown here; the JSON bundle's semantics carry it — see BACKLOG.)
+    m = re.match(r'EXEC[ _]+SQL[ _]+(\w+)', u)
+    if m:
+        v = m.group(1)
+        d = "out" if v in ("INSERT", "UPDATE", "DELETE", "MERGE") else "in"
+        return ("db2", "db2", "Db2 (SQL)", d, "SQL " + v)
+    # EXEC CICS <verb>: LINK/XCTL are calls, SEND/RECEIVE terminal, READ/WRITE a
+    # file; HANDLE/RETURN/etc. are control flow, not I/O.
+    m = re.match(r'EXEC[ _]+CICS[ _]+(\w+)(?:[ _]+' + _IO_NAME + r')?', u)
+    if m:
+        v, tgt = m.group(1), m.group(2)
+        if v in ("LINK", "XCTL") and tgt:
+            return ("call:" + tgt, "subprogram", tgt, "out", "CICS " + v + " " + tgt)
+        if v in ("SEND", "RECEIVE"):
+            return ("cics", "cics", "CICS terminal", "out" if v == "SEND" else "in", "CICS " + v)
+        if v in ("READ", "WRITE", "REWRITE", "STARTBR", "READNEXT") and tgt:
+            d = "out" if v in ("WRITE", "REWRITE") else "in"
+            return ("file:" + tgt, "file", tgt, d, "CICS " + v + " " + tgt)
+        return None
+    m = re.match(r'(LINK|XCTL)[ _]+' + _IO_NAME, u)   # link_POSTLOG / xctl_CLOSEDPG
+    if m:
+        return ("call:" + m.group(2), "subprogram", m.group(2), "out", "CICS " + m.group(1) + " " + m.group(2))
     m = re.match(r'(?:EXEC\s+)?CALL[ _]+' + _IO_NAME, u)
     if m:
         return ("call:" + m.group(1), "subprogram", m.group(1), "out", "CALL " + m.group(1))
@@ -748,6 +771,45 @@ def render_html(machine, title=None, data=None, semantics=None):
 # Part 3 — CLI
 # ===========================================================================
 
+def _extract_config_from_mjs(text):
+    """Pull the config object out of a cobol-xstate runnable `.mjs` module
+    (`export const machineConfig = {...}` / `createMachine({...})`). The object is
+    JSON-clean (string entry actions), so we balance braces and json.loads it.
+    Returns the config dict or None. Note: the runnable form has no data/semantics
+    bundle, so the LINKAGE perimeter isn't available — only action-derived I/O."""
+    for marker in ("machineConfig =", "machineConfig=", "createMachine("):
+        i = text.find(marker)
+        if i == -1:
+            continue
+        j = text.find("{", i)
+        if j == -1:
+            continue
+        depth = 0
+        for k in range(j, len(text)):
+            if text[k] == "{":
+                depth += 1
+            elif text[k] == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[j:k + 1])
+                    except json.JSONDecodeError:
+                        return None
+    return None
+
+
+def _load_doc(text):
+    """Parse an input as JSON (bundle or bare config); fall back to extracting the
+    config from a runnable `.mjs` module."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        cfg = _extract_config_from_mjs(text)
+        if cfg is None:
+            raise
+        return cfg
+
+
 def extract_machine(doc, machine_key="machine"):
     """Accept a bare XState config or the cobol-xstate bundle; return the config."""
     if isinstance(doc, dict) and "states" in doc:
@@ -772,12 +834,15 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.machine == "-":
-        doc = json.load(sys.stdin)
+        doc = _load_doc(sys.stdin.read())
         default_out = "statechart.html"
     else:
         with open(args.machine, encoding="utf-8") as f:
-            doc = json.load(f)
-        default_out = args.machine.rsplit(".", 1)[0] + ".html"
+            doc = _load_doc(f.read())
+        stem = args.machine.rsplit(".", 1)[0]
+        if stem.endswith(".machine"):
+            stem = stem[:-len(".machine")]
+        default_out = stem + ".html"
 
     machine = extract_machine(doc, args.machine_key)
     out = args.out or default_out
