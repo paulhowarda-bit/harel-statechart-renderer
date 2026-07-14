@@ -539,6 +539,36 @@ def test_io_boundary_derived_from_actions_when_no_meta_io():
     assert ("READ", "in") in dirs and ("CALL", "out") in dirs and ("DISPLAY", "out") in dirs
 
 
+def test_data_flow_reads_and_writes():
+    w, r = render_statechart._data_flow(
+        {"actions": {"x": {"assignments": [{"target": "A", "expr": "B + C"}]}},
+         "guards": {"g": {"left": "D", "right": "5"}}},
+        {"A", "B", "C", "D"})
+    assert w == {"A"} and r == {"B", "C", "D"}
+
+
+def test_linkage_parameters_become_the_perimeter():
+    # LINKAGE 01-groups are the program's in/out parameters; direction from the
+    # captured data flow (target=written=output, expr/guard=read=input).
+    machine = {"id": "m", "initial": "a",
+               "states": {"a": {"always": {"target": "z"}}, "z": {"type": "final"}}}
+    data = {
+        "IN-REC":  {"level": 1, "section": "LINKAGE"},
+        "IN-FLD":  {"level": 5, "section": "LINKAGE", "parent": "IN-REC"},
+        "OUT-REC": {"level": 1, "section": "LINKAGE"},
+        "OUT-FLD": {"level": 5, "section": "LINKAGE", "parent": "OUT-REC"},
+        "WS-X":    {"level": 1, "section": "WORKING-STORAGE"},
+    }
+    semantics = {"actions": {"MOVE_IN-FLD_TO_OUT-FLD":
+                             {"assignments": [{"target": "OUT-FLD", "expr": "IN-FLD"}]}}}
+    g = render_statechart.build_graph(machine, data, semantics)
+    eps = {n["label"]: n["kind"] for n in g["boundary"]["nodes"]}
+    assert eps.get("IN-REC") == "parameter" and eps.get("OUT-REC") == "parameter"
+    assert "WS-X" not in eps          # WORKING-STORAGE is not the perimeter
+    dirs = {(e["label"], e["direction"]) for e in g["boundary"]["edges"]}
+    assert ("IN-REC", "in") in dirs and ("OUT-REC", "out") in dirs
+
+
 def test_hand_authored_meta_io_is_not_overridden_by_derivation():
     g = render_statechart.build_graph(_config("posting"))
     labels = {n["label"] for n in g["boundary"]["nodes"]}

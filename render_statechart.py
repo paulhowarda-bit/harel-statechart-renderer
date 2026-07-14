@@ -467,8 +467,99 @@ def compute_paragraph_grouping(elk_nodes, root_path):
             "entry": entry, "paragraphOf": paragraph_of}
 
 
-def build_graph(machine):
-    """XState v5 config dict -> {root, nodes, edges, boundary, index, grouping}."""
+def _expr_idents(expr):
+    """COBOL data-name identifiers referenced in an expression string (drop
+    figurative constants and numeric literals)."""
+    if not isinstance(expr, str):
+        return []
+    fig = {"ZERO", "ZEROS", "ZEROES", "SPACE", "SPACES", "HIGH-VALUE", "HIGH-VALUES",
+           "LOW-VALUE", "LOW-VALUES", "QUOTE", "QUOTES", "NULL", "ALL", "TRUE", "FALSE"}
+    return [t for t in re.findall(r"[A-Za-z][A-Za-z0-9-]*", expr) if t.upper() not in fig]
+
+
+def _data_flow(semantics, field_names):
+    """From the captured semantics, the set of fields WRITTEN (assignment targets)
+    and READ (assignment expressions + guard operands). Restricted to real fields."""
+    written, read = set(), set()
+    sem = semantics or {}
+    for a in (sem.get("actions") or {}).values():
+        if not isinstance(a, dict):
+            continue
+        for asg in (a.get("assignments") or []):
+            t = asg.get("target")
+            if t:
+                written.add(str(t).split("(")[0].strip())     # drop subscripts
+            for i in _expr_idents(asg.get("expr", "")):
+                read.add(i)
+    for g in (sem.get("guards") or {}).values():
+        if not isinstance(g, dict):
+            continue
+        for side in ("left", "right"):
+            if isinstance(g.get(side), str):
+                for i in _expr_idents(g[side]):
+                    read.add(i)
+    return written & field_names, read & field_names
+
+
+def derive_perimeter_params(data, semantics, elk_nodes, root_path, machine):
+    """The LINKAGE 01-level groups are the program's parameters — its perimeter for
+    a called subprogram (COMMAREA-style data in/out). Direction is taken from the
+    captured data flow: a group with any field WRITTEN is an output; any field READ
+    makes it an input. Inputs attach to the initial state, outputs to the final
+    state(s), so the parameters read as 'in at the start, out at the end'."""
+    if not data:
+        return []
+    children = {}
+    for name, f in data.items():
+        p = (f or {}).get("parent")
+        if p:
+            children.setdefault(p, []).append(name)
+
+    def descendants(name):
+        acc, stack = {name}, [name]
+        while stack:
+            for c in children.get(stack.pop(), []):
+                if c not in acc:
+                    acc.add(c)
+                    stack.append(c)
+        return acc
+
+    field_names = set(data.keys())
+    written, read = _data_flow(semantics, field_names)
+    initial = machine.get("initial")
+    initial_path = f"{root_path}.{initial}" if initial else None
+    finals = [p for p, n in elk_nodes.items() if n.get("kind") == "final"]
+
+    def attach(path, direction, ref):
+        n = elk_nodes.get(path)
+        if not n:
+            return
+        io = n.setdefault("io", {"inputs": [], "outputs": []})
+        io.setdefault("inputs" if direction == "in" else "outputs", []).append(ref)
+
+    endpoints = []
+    for name, f in data.items():
+        if not str((f or {}).get("section", "")).upper().startswith("LINKAGE"):
+            continue
+        if (f or {}).get("level") not in (1, "1", "01"):
+            continue
+        ds = descendants(name)
+        is_out = bool(ds & written)
+        is_in = bool(ds & read) or not is_out          # a passed-in param defaults to input
+        ep_id = "param:" + name
+        endpoints.append({"id": ep_id, "kind": "parameter", "label": name})
+        if is_in:
+            attach(initial_path, "in", {"event": name, "endpoint": ep_id})
+        if is_out:
+            for fp in finals[:2]:
+                attach(fp, "out", {"event": name, "endpoint": ep_id})
+    return endpoints
+
+
+def build_graph(machine, data=None, semantics=None):
+    """XState v5 config dict -> {root, nodes, edges, boundary, index, grouping}.
+    `data`/`semantics` (from the cobol-xstate bundle) drive the external perimeter
+    (LINKAGE parameters) when the machine carries no meta.io."""
     root_path = machine.get("id", "root")
     elk_nodes, edges = {}, []
     index = {"states": [], "transitions": [], "events": [], "guards": [],
@@ -530,7 +621,10 @@ def build_graph(machine):
 
     io_meta = (machine.get("meta", {}) or {}).get("io", {}) or {}
     if not io_meta.get("endpoints") and not io_meta.get("fields"):
-        derived = derive_io_from_actions(elk_nodes)   # COBOL machines: I/O is in actions
+        # COBOL machines carry no meta.io — the perimeter is in the actions
+        # (files/CALL/DISPLAY) and the LINKAGE section (input/output parameters).
+        derived = derive_io_from_actions(elk_nodes)
+        derived += derive_perimeter_params(data, semantics, elk_nodes, root_path, machine)
         if derived:
             io_meta = dict(io_meta)
             io_meta["endpoints"] = derived
@@ -623,8 +717,8 @@ HTML_SHELL = """<!doctype html>
 """
 
 
-def render_html(machine, title=None):
-    graph = build_graph(machine)
+def render_html(machine, title=None, data=None, semantics=None):
+    graph = build_graph(machine, data, semantics)
     css, _ = read_vendor("viewer.css")
     viewer, _ = read_vendor("viewer.js")
     boot, _ = read_vendor("layout_boot.js")
@@ -688,7 +782,11 @@ def main(argv=None):
     machine = extract_machine(doc, args.machine_key)
     out = args.out or default_out
 
-    html, graph, used_cdn = render_html(machine, title=args.title)
+    # the cobol-xstate bundle carries the data dictionary + semantics alongside
+    # `machine`; they drive the external perimeter (LINKAGE params) and provenance.
+    data = doc.get("data") if isinstance(doc, dict) else None
+    semantics = doc.get("semantics") if isinstance(doc, dict) else None
+    html, graph, used_cdn = render_html(machine, title=args.title, data=data, semantics=semantics)
     with open(out, "w", encoding="utf-8") as f:
         f.write(html)
 
