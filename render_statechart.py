@@ -350,7 +350,7 @@ def derive_io_from_actions(elk_nodes):
     return list(endpoints.values())
 
 
-def build_external_io(elk_nodes, index, raised, io_meta):
+def build_external_io(elk_nodes, index, raised, io_meta, data=None):
     endpoints = {}
     for ep in io_meta.get("endpoints", []):
         endpoints[ep["id"]] = {
@@ -399,21 +399,25 @@ def build_external_io(elk_nodes, index, raised, io_meta):
                     continue
                 bn = ensure_boundary(ep_id, ref.get("endpointKind"))
                 kind = "event" if ref.get("event") else "field"
-                label = ref.get("event") or field_label(ref)
+                label = ref.get("label") or ref.get("event") or field_label(ref)
+                flds = ref.get("fields") or []
+                fdetail = _fields_detail(flds, data)
                 boundary_edges.append({
                     "id": f"io{len(boundary_edges)}", "endpoint": ep_id,
                     "endpointNode": bn["id"], "state": path,
                     "direction": "in" if direction == "inputs" else "out",
-                    "kind": kind, "label": label,
+                    "kind": kind, "label": label, "fields": flds, "fieldsDetail": fdetail,
                     "fieldId": ref.get("field"), "event": ref.get("event"),
                 })
                 n.setdefault("ioBadges", {"in": [], "out": []})
                 n["ioBadges"]["in" if direction == "inputs" else "out"].append(
-                    {"kind": kind, "label": label, "endpoint": ep_id})
+                    {"kind": kind, "label": label, "fields": flds,
+                     "fieldsDetail": fdetail, "endpoint": ep_id})
                 bucket = "inputs" if direction == "inputs" else "outputs"
                 index[bucket].append({
                     "state": path, "endpoint": ep_id, "kind": kind,
-                    "label": label, "event": ref.get("event"), "field": ref.get("field"),
+                    "label": label, "fields": flds, "fieldsDetail": fdetail,
+                    "event": ref.get("event"), "field": ref.get("field"),
                 })
 
     declared_input_events = {be["event"] for be in boundary_edges if be["event"]}
@@ -581,6 +585,49 @@ def derive_perimeter_params(data, semantics, elk_nodes, root_path, machine):
     return endpoints
 
 
+def _field_type_str(name, data):
+    """A field's COBOL type for display — 'PIC S9(7)V99 COMP-3' from the data
+    dictionary. Empty when the field isn't in the dictionary (e.g. a bare literal)
+    or carries no PICTURE (group item)."""
+    d = (data or {}).get(name)
+    if not isinstance(d, dict):
+        return ""
+    t = d.get("type") or {}
+    pic = t.get("pic")
+    if not pic:
+        return ""
+    usage = t.get("usage")
+    s = "PIC " + pic
+    if usage and usage not in ("DISPLAY", ""):
+        s += " " + usage
+    return s
+
+
+def _fields_detail(names, data):
+    """[{name, type}] for a list of field names, resolving each COBOL type from the
+    data dictionary — the field-level list the viewer shows on an I/O event hover."""
+    return [{"name": n, "type": _field_type_str(n, data)} for n in (names or [])]
+
+
+def _event_fields(ev):
+    """The data fields an interface I/O event moves across the boundary. Prefer the
+    generator's explicit `fields` (SELECT INTO targets, the SQLCODE response, a
+    COMMAREA layout); otherwise fall back to the SQL host variables (`:WS-VAR`)
+    parsed from the event's raw COBOL, so an INSERT/UPDATE/DELETE that binds values
+    but records no INTO still shows what it sends. Order-preserving, de-duplicated."""
+    out, seen = [], set()
+    for f in (ev.get("fields") or []):
+        if f and f not in seen:
+            seen.add(f); out.append(f)
+    if out:
+        return out
+    for m in re.finditer(r':\s*([A-Za-z][A-Za-z0-9_-]*)', ev.get("cobol") or ""):
+        v = m.group(1)
+        if v not in seen:
+            seen.add(v); out.append(v)
+    return out
+
+
 def build_io_from_interface(interface, elk_nodes, root_path, machine):
     """Consume the generator's structured `interface` section — the authoritative
     external perimeter: named endpoints (real Db2 tables, called programs, files,
@@ -621,10 +668,15 @@ def build_io_from_interface(interface, elk_nodes, root_path, machine):
         if eid not in endpoints or not node:
             continue
         direction = "in" if str(ev.get("direction", "")).lower() in ("get", "read", "in") else "out"
-        label = ev.get("verb") or ev.get("event") or eid
+        verb = ev.get("verb") or ev.get("event") or eid
+        flds = _event_fields(ev)
+        # don't repeat a field the verb already spells out (e.g. verb "response
+        # (SQLCODE)" + field SQLCODE would read "response (SQLCODE) (SQLCODE)").
+        shown = [f for f in flds if f not in verb]
+        label = verb + (" (" + ", ".join(shown) + ")" if shown else "")
         io = node.setdefault("io", {"inputs": [], "outputs": []})
         io.setdefault("inputs" if direction == "in" else "outputs", []).append(
-            {"event": label, "endpoint": "if:" + eid})
+            {"event": verb, "label": label, "fields": flds, "endpoint": "if:" + eid})
     return list(endpoints.values())
 
 
@@ -706,7 +758,7 @@ def build_graph(machine, data=None, semantics=None, interface=None):
             io_meta = dict(io_meta)
             io_meta["endpoints"] = derived
             io_meta["derivedFromActions"] = True
-    boundary = build_external_io(elk_nodes, index, raised, io_meta)
+    boundary = build_external_io(elk_nodes, index, raised, io_meta, data)
     grouping = compute_paragraph_grouping(elk_nodes, root_path)
 
     return {"root": root_path, "nodes": elk_nodes, "edges": edges,

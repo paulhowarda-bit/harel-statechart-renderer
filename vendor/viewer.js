@@ -40,6 +40,21 @@
 
   const isSynthetic = d => d.label.indexOf("__") !== -1 && d.kind !== "final";
 
+  // The boundary I/O lines a state shows inline: one per distinct in (←) / out (→)
+  // reference from its ioBadges. De-duplicated by direction+label so a doubly-
+  // recorded event (e.g. an SQLCODE response captured twice) is a single line —
+  // the row count here MUST match layout_boot's leafSize, or boxes mis-size.
+  const ioLines = d => {
+    const b = d.ioBadges; if (!b) return [];
+    const seen = new Set(), out = [];
+    [["in", b.in || []], ["out", b.out || []]].forEach(([dir, items]) =>
+      items.forEach(it => {
+        const key = dir + "|" + it.label;
+        if (!seen.has(key)) { seen.add(key); out.push({ dir, text: it.label, fields: it.fieldsDetail || [] }); }
+      }));
+    return out;
+  };
+
   function stateRole(d) {
     if (d.kind === "final") return "final";
     if (d.isCollapsedGroup) return "paragraph";
@@ -205,13 +220,22 @@
       const g = d3.select(this);
       let yy = 22;
       const add = (cls, txt) => {
-        g.append("text").attr("class", `compartment ${cls} lod-l2`)
+        const t = g.append("text").attr("class", `compartment ${cls} lod-l2`)
           .attr("x", 8).attr("y", yy + 12).text(trunc(txt, 46));
         yy += 16;
+        return t;
       };
       (d.entry || []).forEach(a => add("entry", `entry / ${a}`));
       (d.exit || []).forEach(a => add("exit", `exit / ${a}`));
       ((d.harel && d.harel.staticReactions) || []).forEach(sr => add("sr", `SR: ${sr}`));
+      // external I/O — the boundary fields this state reads (←) / writes (→),
+      // shown inline so the data crossing the perimeter is visible without hovering.
+      // Each line gets a native tooltip listing its fields with their COBOL types.
+      ioLines(d).forEach(l => {
+        const t = add(l.dir === "in" ? "io-in" : "io-out", (l.dir === "in" ? "← " : "→ ") + l.text);
+        if (l.fields && l.fields.length)
+          t.append("title").text(l.fields.map(f => f.name + (f.type ? " — " + f.type : "")).join("\n"));
+      });
       ((d.harel && d.harel.activities) || []).forEach(act =>
         g.append("text").attr("class", "activity-badge lod-l2")
           .attr("x", 8).attr("y", (yy += 16) - 4).text(trunc(`⏲ ${act.name} (${act.binding})`, 46)));
@@ -648,6 +672,20 @@
     if (d.endpointId === "__unspecified_in__") s += `<div class="tt-row tt-note">endpoint unconfirmed (detected structurally)</div>`;
     return s;
   }
+  function bedgeTooltipHTML(d) {
+    // the "event line" hover: the I/O event, then a field-level list (name + COBOL type)
+    let s = `<div class="tt-title">${d.direction === "in" ? "input" : "output"} · ${esc(d.event || d.label)}</div>`;
+    s += `<div class="tt-kind">${d.direction === "in" ? "from" : "to"} ${esc(epLabel(d.endpoint))}</div>`;
+    const fd = d.fieldsDetail || [];
+    const cls = d.direction === "in" ? "tt-in" : "tt-out";
+    if (fd.length) {
+      s += fd.map(f => `<div class="tt-row ${cls}"><span class="tt-k">field</span> ${esc(f.name)}` +
+        (f.type ? ` <span class="tt-src">${esc(f.type)}</span>` : "") + `</div>`).join("");
+    } else {
+      s += `<div class="tt-row tt-note">no fields recorded for this event</div>`;
+    }
+    return s;
+  }
   function positionTip(ev) {
     const node = tip.node();
     const pad = 16, vw = window.innerWidth, vh = window.innerHeight;
@@ -664,7 +702,7 @@
     if (!t || !t.closest) { hideTip(); return; }
     let html = null, el;
     if ((el = t.closest("g.edge"))) { const d = d3.select(el).datum(); if (d) html = edgeTooltipHTML(d); }
-    else if ((el = t.closest("g.bedge"))) { const d = d3.select(el).datum(); if (d) html = `<div class="tt-title">${d.direction === "in" ? "input" : "output"} · ${esc(d.label)}</div>`; }
+    else if ((el = t.closest("g.bedge"))) { const d = d3.select(el).datum(); if (d) html = bedgeTooltipHTML(d); }
     else if ((el = t.closest("g.boundary"))) { const d = d3.select(el).datum(); if (d) html = boundaryNodeTooltipHTML(d); }
     else if ((el = t.closest("g.state"))) { const d = d3.select(el).datum(); if (d) html = nodeTooltipHTML(d); }
     if (html) { tip.html(html).classed("show", true); positionTip(ev); } else hideTip();

@@ -43,6 +43,20 @@
       if (/^io/.test(k)) return "io";
       return "plumbing";
     }
+    // Boundary I/O lines shown inside a box (mirrors the viewer's ioLines): one per
+    // distinct in (←) / out (→) reference, de-duplicated by direction+label. Kept
+    // in lock-step with viewer.js so width/height reserved here match what renders.
+    function ioLeafLines(node) {
+      var b = node.ioBadges; if (!b) return [];
+      var seen = {}, out = [];
+      [["← ", b.in || []], ["→ ", b.out || []]].forEach(function (pair) {
+        pair[1].forEach(function (it) {
+          var key = pair[0] + "|" + it.label;
+          if (!seen[key]) { seen[key] = 1; out.push(pair[0] + it.label); }
+        });
+      });
+      return out;
+    }
     function leafSize(node) {
       var lines = [(node.labels && node.labels[0] && node.labels[0].text) || node.id];
       (node.entry || []).forEach(function (a) { lines.push("entry / " + a); });
@@ -53,6 +67,8 @@
       ((node.harel && node.harel.activities) || []).forEach(function (act) {
         lines.push("do " + act.name + " (" + act.binding + ")");
       });
+      var ioL = ioLeafLines(node);
+      ioL.forEach(function (l) { lines.push(l); });
       // Clamp the box width to a readable maximum. A single long COBOL statement
       // (a big COMPUTE, a chained MOVE) would otherwise size one box thousands of
       // pixels wide and wreck the whole layout — exactly what blew up a 397-state
@@ -68,7 +84,7 @@
       // its badge spilled into the next box — count them here too.
       var rows = (node.entry || []).length + (node.exit || []).length +
         ((node.harel && node.harel.staticReactions) || []).length +
-        ((node.harel && node.harel.activities) || []).length;
+        ((node.harel && node.harel.activities) || []).length + ioL.length;
       return { w: w, h: LINE_H + (ROLE_PADY[role] || PAD_Y) * 2 + rows * LINE_H };
     }
 
@@ -338,6 +354,7 @@
         out.boundaryEdges.push({
           id: be.id, endpoint: be.endpoint, state: be.state,
           direction: be.direction, kind: be.kind, label: be.label,
+          event: be.event, fields: be.fields, fieldsDetail: be.fieldsDetail,
           unconfirmedEndpoint: !!be.unconfirmedEndpoint,
           sections: [{ start: pts[0], bends: pts.slice(1, -1), end: pts[pts.length - 1] }],
           labelX: railX + (isLeft ? -6 : 6),
