@@ -286,14 +286,14 @@ def _classify_io_action(a):
     u = str(a).strip().upper()
     # EXEC SQL <verb> -> Db2. (The runnable .mjs flattens the statement, so the
     # table is unknown here; the JSON bundle's semantics carry it — see BACKLOG.)
-    m = re.match(r'EXEC[ _]+SQL[ _]+(\w+)', u)
+    m = re.match(r'EXEC[ _]+SQL[ _]+([A-Z]+)', u)   # [A-Z]+ so \w doesn't eat the '_'
     if m:
         v = m.group(1)
         d = "out" if v in ("INSERT", "UPDATE", "DELETE", "MERGE") else "in"
         return ("db2", "db2", "Db2 (SQL)", d, "SQL " + v)
     # EXEC CICS <verb>: LINK/XCTL are calls, SEND/RECEIVE terminal, READ/WRITE a
     # file; HANDLE/RETURN/etc. are control flow, not I/O.
-    m = re.match(r'EXEC[ _]+CICS[ _]+(\w+)(?:[ _]+' + _IO_NAME + r')?', u)
+    m = re.match(r'EXEC[ _]+CICS[ _]+([A-Z]+)(?:[ _]+' + _IO_NAME + r')?', u)
     if m:
         v, tgt = m.group(1), m.group(2)
         if v in ("LINK", "XCTL") and tgt:
