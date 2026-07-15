@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harel-statechart-renderer"
+version = "0.1.0"
+description = "Turn an XState v5 Harel statechart JSON into one self-contained, offline, interactive HTML diagram — zoomable, pannable, searchable, with a mini-map, semantic zoom, and an external-I/O boundary."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Paul Howard" }]
+keywords = ["harel", "statechart", "xstate", "cobol", "mainframe", "modernization", "elk", "d3", "visualization"]
+dependencies = []          # pure standard library, by design
+
+[project.scripts]
+render-statechart = "render_statechart:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+# One stdlib-only module at the repo root — no package tree. Declaring py-modules
+# explicitly is required: with a flat layout setuptools would otherwise abort on
+# auto-discovery ("multiple top-level modules") because of vendor/, tests/, etc.
+#
+# The vendored d3/elkjs/viewer assets live in vendor/ NEXT TO the module and are
+# located via __file__ (HERE/vendor), so an editable install resolves them in the
+# checkout. Install with `pip install -e .`; a non-editable `pip install .` would
+# copy the module without vendor/ and the viewer assets would not be found.
+[tool.setuptools]
+py-modules = ["render_statechart"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

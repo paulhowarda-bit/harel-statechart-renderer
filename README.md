@@ -13,12 +13,26 @@ It is built on the `harel-statechart-render` skill: it reuses the skill's
 
 ## Usage
 
+No install needed — it is one standard-library script, so just run it:
+
 ```bash
 # XState v5 config (or a wrapper bundle with a `machine` key) -> HTML
 python render_statechart.py examples/banktran.machine.json
 python render_statechart.py machine.json -o diagram.html --open
 cat machine.json | python render_statechart.py - -o diagram.html
 ```
+
+Optionally install it to get a `render-statechart` command on your PATH that
+works from any directory:
+
+```bash
+python -m pip install -e .        # editable install
+render-statechart machine.json -o diagram.html
+```
+
+Use the **editable** install (`-e`). The vendored `d3`/`elkjs`/viewer assets live
+in `vendor/` next to the script and are found relative to it, so a non-editable
+`pip install .` would copy the module without them.
 
 Open the resulting `.html` in any browser (double-click / `file://`).
 
