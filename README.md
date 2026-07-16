@@ -8,8 +8,10 @@ A single, standalone, **pure-standard-library** Python program. ELK layout runs
 **in the browser** (vendored `elk.bundled.js`), so the tool needs **no Node.js**
 and the output opens in any browser with no server and no network.
 
-It is built on the `harel-statechart-render` skill: it reuses the skill's
-`viewer.js`/`viewer.css` and ports its `elk_layout.mjs` to run client-side.
+This repo is **the** renderer. The `harel-statechart-render` skill is its
+advisor — the Harel→glyph mapping, the fidelity ladder, and the legibility rules
+— and carries no code of its own: a second copy of a renderer only drifts, and
+then draws a stale picture that is quietly wrong.
 
 ## Usage
 
@@ -30,6 +32,23 @@ python -m pip install -e .        # editable install
 render-statechart machine.json -o diagram.html
 ```
 
+## Checking the diagram is honest
+
+`validate_render.py` enforces the fidelity rule mechanically: it reports every
+construct on the ladder (faithful glyph / annotated / flagged-unconfirmed) and
+**fails** if something is missing from the picture without the picture saying so.
+
+```bash
+python validate_render.py machine.json            # exit 1 if a construct is lost
+python validate_render.py machine.json --strict   # also fail on unconfirmed features
+validate-statechart machine.json                  # same, after `pip install -e .`
+```
+
+Give it the **bundle**, not just the machine. A renderer that drops whole regions
+of the input still emits an internally perfect graph — every edge resolved,
+nothing wrong to find by inspecting it. The evidence of the loss exists only in
+the source, so the check compares the two.
+
 Use the **editable** install (`-e`). The vendored `d3`/`elkjs`/viewer assets live
 in `vendor/` next to the script and are found relative to it, so a non-editable
 `pip install .` would copy the module without them.
@@ -47,7 +66,7 @@ XState v5 JSON ──► build_graph()  ──► ELK graph + search index   (Py
                    one HTML file inlining:
                      • elkjs (browser build)   ← lays out on load, in the browser
                      • d3                       ← renders + drives interaction
-                     • viewer.js / viewer.css   ← the skill's viewer
+                     • viewer.js / viewer.css   ← the viewer (vendor/)
                      • the graph JSON
 ```
 

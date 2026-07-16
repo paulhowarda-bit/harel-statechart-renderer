@@ -1,11 +1,15 @@
-# Upstream bugs in `harel-statechart-render` (v2)
+# Bugs inherited from the original `harel-statechart-render` viewer (v2)
 
-The viewer in `vendor/` is built on the `harel-statechart-render` skill and vendors
-its `assets/viewer.js` / `viewer.css`. While integrating it, three bugs in the
-skill surfaced. They are fixed in this repo's vendored copies; this file records
-them so they can be fixed upstream too. Each bites any machine whose states are
-all nested under a single root state — which is exactly what a COBOL→XState
-emitter produces (program id as the root OR-state, paragraphs nested inside).
+**Historical.** `vendor/viewer.js` / `viewer.css` began as copies of the ones the
+`harel-statechart-render` skill used to ship, and three bugs surfaced while
+integrating them. They are fixed here. There is no longer an upstream to report
+them to: the skill now carries advice only, and this repo is the sole renderer —
+so this file is a record of what was wrong and why the fixes look as they do,
+not a list of things to push elsewhere.
+
+Each bites any machine whose states are all nested under a single root state —
+which is exactly what a COBOL→XState emitter produces (program id as the root
+OR-state, paragraphs nested inside).
 
 ---
 

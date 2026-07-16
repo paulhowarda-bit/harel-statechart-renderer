@@ -748,3 +748,82 @@ def test_inlining_does_not_mutate_the_callers_bundle():
     before = json.dumps(charts, sort_keys=True)
     render_statechart.build_graph(machine, charts=charts)
     assert json.dumps(charts, sort_keys=True) == before, "input doc must not be mutated"
+
+
+# ---------------------------------------------------------------------------
+# validate_render.py — the fidelity check
+# ---------------------------------------------------------------------------
+
+_vspec = importlib.util.spec_from_file_location("validate_render", ROOT / "validate_render.py")
+validate_render = importlib.util.module_from_spec(_vspec)
+sys.modules["validate_render"] = validate_render
+_vspec.loader.exec_module(validate_render)
+
+
+def test_validator_catches_a_bundle_whose_charts_were_never_drawn():
+    # THE case this tool exists for. A renderer that ignores `charts` emits a
+    # perfectly self-consistent graph — a tidy skeleton, every edge resolved,
+    # nothing wrong to find *in the graph*. The evidence lives only in the
+    # bundle, so a graph-only check would certify the silent drop.
+    machine, charts = _bundle_with_charts()
+    doc = {"machine": machine, "charts": charts}
+    skeleton = render_statechart.build_graph(machine)          # charts ignored
+    assert not [e for e in skeleton["edges"] if e.get("unresolved")
+                or e.get("danglingTarget")], "precondition: the graph looks clean"
+
+    _f, _a, _fl, dropped = validate_render.check(skeleton, doc)
+    assert dropped, "a bundle with undrawn `charts` must fail integrity"
+    assert "not in the diagram" in dropped[0]
+
+    # and it passes once they are actually drawn
+    full = render_statechart.build_graph(machine, charts=charts)
+    _f, _a, _fl, dropped = validate_render.check(full, doc)
+    assert not dropped
+
+
+def test_validator_ignores_charts_it_cannot_see_without_the_doc():
+    # graph-only call must not invent a failure it has no evidence for
+    machine, charts = _bundle_with_charts()
+    skeleton = render_statechart.build_graph(machine)
+    _f, _a, _fl, dropped = validate_render.check(skeleton)
+    assert not dropped
+
+
+def test_validator_flags_a_dangling_target_as_lost():
+    machine = {"id": "P", "initial": "a",
+               "states": {"a": {"always": [{"target": "nowhere"}]}}}
+    g = render_statechart.build_graph(machine)
+    _f, _a, _fl, dropped = validate_render.check(g, {"machine": machine})
+    assert any("no such state" in d for d in dropped)
+
+
+def test_validator_reports_the_harel_ladder():
+    machine = {"id": "P", "type": "parallel",
+               "states": {"R1": {"states": {"a": {"entry": ["act"]}}},
+                          "R2": {"states": {"h": {"type": "history", "history": "deep"}}}}}
+    g = render_statechart.build_graph(machine)
+    faithful, annotated, flagged, dropped = validate_render.check(g, {"machine": machine})
+    assert any("AND-state" in x for x in faithful)
+    assert any("deep glyph" in x for x in faithful)
+    assert any("entry/exit actions" in x for x in faithful)
+    # an AND-state with no recorded broadcast is rung 3, not a silent drop
+    assert any("no recorded broadcast" in x for x in flagged)
+    assert not dropped
+
+
+def test_validator_exit_codes(tmp_path):
+    clean = tmp_path / "clean.json"
+    clean.write_text(json.dumps({"id": "P", "initial": "a", "states": {"a": {}}}))
+    assert validate_render.main([str(clean)]) == 0
+
+    # main() threads `charts` through to build_graph, so they are drawn -> 0
+    machine, charts = _bundle_with_charts()
+    bundle = tmp_path / "bundle.json"
+    bundle.write_text(json.dumps({"machine": machine, "charts": charts}))
+    assert validate_render.main([str(bundle)]) == 0
+
+    # a lost construct fails without needing --strict
+    dangling = tmp_path / "dangling.json"
+    dangling.write_text(json.dumps({"id": "P", "initial": "a",
+                                    "states": {"a": {"always": [{"target": "nowhere"}]}}}))
+    assert validate_render.main([str(dangling)]) == 1

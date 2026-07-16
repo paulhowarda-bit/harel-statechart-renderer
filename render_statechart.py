@@ -2,22 +2,26 @@
 """
 render_statechart.py — XState v5 Harel statechart JSON → one self-contained HTML viewer.
 
-A standalone, pure-standard-library program built on the `harel-statechart-render`
-skill. It reproduces the skill's pipeline in a single file:
+A standalone, pure-standard-library program. This repo is THE renderer; the
+`harel-statechart-render` skill is its advisor (the Harel→glyph mapping, the
+fidelity ladder, the legibility rules) and deliberately carries no code — a
+second copy of a renderer only drifts and then draws a stale, quietly-wrong
+picture. Two stages, one file:
 
   1. Walk the XState v5 `createMachine` config (states, transitions, history,
      parallel, entry/exit, `meta` provenance, `meta.io` external boundary) into
-     an ELK graph + a flat search index — the logic of the skill's
-     scripts/build_elk_graph.py.
-  2. Emit a single HTML file that inlines elkjs (browser build), d3, the skill's
-     viewer.js/viewer.css, and the graph data. ELK layout runs **in the browser**
-     on load (see vendor/layout_boot.js), so this program needs no Node — and the
-     output opens in any browser with no server and no network.
+     an ELK graph + a flat search index.
+  2. Emit a single HTML file that inlines elkjs (browser build), d3, the
+     viewer.js/viewer.css from vendor/, and the graph data. ELK layout runs
+     **in the browser** on load (see vendor/layout_boot.js), so this program
+     needs no Node — and the output opens in any browser with no server and no
+     network.
 
-Fidelity rule (inherited from the skill): render Harel faithfully or annotate the
-gap — never silently draw UML. Every glyph hint traces to a real XState field or a
-`meta.harel` annotation; subset-inexpressible features are recorded as hints for the
-viewer, never upgraded to a confident-but-false picture.
+Fidelity rule: render Harel faithfully or annotate the gap — never silently draw
+UML. Every glyph hint traces to a real XState field or a `meta.harel` annotation;
+subset-inexpressible features are recorded as hints for the viewer, never
+upgraded to a confident-but-false picture. `validate_render.py` checks this
+mechanically.
 
 Usage:
     python render_statechart.py machine.json [-o diagram.html]
@@ -50,7 +54,6 @@ CDN = {
 
 # ===========================================================================
 # Part 1 — XState v5 config → ELK graph + search index
-# (a faithful port of the skill's scripts/build_elk_graph.py)
 # ===========================================================================
 
 def state_kind(node):
