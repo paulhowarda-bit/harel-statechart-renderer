@@ -30,6 +30,7 @@ bundle (`{"machine": {...}, ...}`); the bundle's `machine` is used automatically
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -646,13 +647,19 @@ def build_io_from_interface(interface, elk_nodes, root_path, machine):
     # An event names its state by bare name, but the state may be nested under a
     # region container in a parallel machine (CICSINQ.PROGRAM.1000-LOOKUP), so
     # resolve by the unique final path segment (COBOL paragraph names are unique).
-    by_seg, ambiguous = {}, set()
-    for path in elk_nodes:
+    by_seg, ambiguous, by_id = {}, set(), {}
+    for path, n in elk_nodes.items():
         seg = path.split(".")[-1]
         if seg in by_seg:
             ambiguous.add(seg)
         else:
             by_seg[seg] = path
+        # A bundle names its perimeter states by the state's explicit `id`
+        # ("1000-OPEN__io5"), which is neither a path nor a path segment ("io5"),
+        # so match on it too or every event is dropped and the boundary is empty.
+        xid = n.get("xstateId")
+        if xid and xid not in by_id:
+            by_id[xid] = path
 
     def resolve(state):
         if not state:
@@ -660,6 +667,8 @@ def build_io_from_interface(interface, elk_nodes, root_path, machine):
         full = f"{root_path}.{state}"
         if full in elk_nodes:
             return full
+        if state in by_id:
+            return by_id[state]
         return by_seg.get(state) if state not in ambiguous else None
 
     for ev in (interface.get("events") or []):
@@ -680,11 +689,153 @@ def build_io_from_interface(interface, elk_nodes, root_path, machine):
     return list(endpoints.values())
 
 
-def build_graph(machine, data=None, semantics=None, interface=None):
+ACTOR_PREFIX = "actor:"
+RET_KEY = "__RET__"
+RET_TARGET = "#" + RET_KEY
+
+
+def _iter_states(node, path, out=None):
+    """(path, state) for `node` and every state below it."""
+    if out is None:
+        out = []
+    out.append((path, node))
+    for key, child in (node.get("states") or {}).items():
+        _iter_states(child, f"{path}.{key}" if path else key, out)
+    return out
+
+
+def _first_target(val):
+    """The target of an XState transition written as a str, dict, or list."""
+    if isinstance(val, list):
+        val = val[0] if val else None
+    if isinstance(val, str):
+        return val
+    if isinstance(val, dict):
+        t = val.get("target")
+        return t[0] if isinstance(t, list) and t else t
+    return None
+
+
+def _actor_name(src):
+    return src[len(ACTOR_PREFIX):] if src.startswith(ACTOR_PREFIX) else src
+
+
+def _retarget(state, old, new):
+    """Repoint this state's transitions from target `old` to target `new`."""
+    def fix(trans):
+        out = []
+        for t in (trans if isinstance(trans, list) else [trans]):
+            if isinstance(t, str):
+                t = {"target": t}
+            if isinstance(t, dict) and t.get("target") == old:
+                t = dict(t, target=new)
+            out.append(t)
+        return out
+
+    if state.get("always"):
+        state["always"] = fix(state["always"])
+    on = state.get("on")
+    if isinstance(on, dict):
+        for event in list(on):
+            on[event] = fix(on[event])
+
+
+def inline_charts(machine, charts):
+    """Merge a bundle's `charts` sub-charts into one drawable machine.
+
+    The generator emits the contract as a true Harel statechart, so the bundle's
+    `machine` holds only the top-level skeleton: each PERFORMed paragraph is its
+    own actor sub-chart under `charts`, entered via `invoke: {src: "actor:NAME"}`
+    and left via the sentinel target `#__RET__`. Walking `machine` alone draws the
+    skeleton and silently drops the body of the program, and since every perimeter
+    state lives down in a sub-chart, the external I/O boundary vanishes with it.
+
+    Merge each sub-chart's states in as root-level siblings — one box per COBOL
+    paragraph, drawn once however many places PERFORM it — then wire the call
+    edges the `invoke` implies: the call site into the chart's entry state, and
+    the chart's `__RET__` final state back out to each site's `onDone` target.
+    Inlining a fresh copy per call site instead would draw the same paragraph N
+    times and make its name ambiguous, which is precisely how `interface`
+    addresses its perimeter states.
+
+    Returns (machine, info); input without `charts` is returned unchanged.
+    """
+    if not isinstance(charts, dict) or not charts:
+        return machine, {}
+
+    machine = copy.deepcopy(machine)
+    root_states = machine.setdefault("states", {})
+
+    # 1. merge the sub-charts in; note where each starts, ends, and what it owns
+    entry_of, ret_of, owner, clashes = {}, {}, {}, []
+    for src, chart in charts.items():
+        if not isinstance(chart, dict):
+            continue
+        name = _actor_name(src)
+        entry_of[src] = chart.get("initial")
+        # Every sub-chart ends at a synthetic `__RET__` final state and every one
+        # of them is named identically, so namespace it on the way in — merging
+        # as-is would collapse all N paragraphs onto a single shared return box.
+        ret_key = f"{name}{RET_KEY}"
+        merged = []
+        for key, state in (chart.get("states") or {}).items():
+            state = copy.deepcopy(state)
+            if key == RET_KEY:
+                key = state["id"] = ret_key
+                ret_of[src] = ret_key
+            if key in root_states:
+                clashes.append(key)      # keep the machine's own; never overwrite
+                continue
+            root_states[key] = state
+            owner[key] = src
+            merged.append(key)
+        for key in merged:
+            for _path, state in _iter_states(root_states[key], key):
+                _retarget(state, RET_TARGET, f"#{ret_key}")
+
+    # 2. the call sites, found over the merged tree — sub-charts invoke each other
+    sites = {}
+    for path, state in _iter_states(machine, machine.get("id", "root")):
+        invoke = state.get("invoke")
+        if not isinstance(invoke, dict):
+            continue
+        src = invoke.get("src")
+        if not isinstance(src, str) or src not in entry_of:
+            continue
+        entry = entry_of[src]
+        if entry:
+            state.setdefault("always", []).append({
+                "target": f"#{entry}",
+                "meta": {"kind": "invoke", "note": f"PERFORM {_actor_name(src)}"},
+            })
+        ret = _first_target(invoke.get("onDone"))
+        if ret:
+            sites.setdefault(src, []).append(
+                (state.get("id") or path.split(".")[-1], ret))
+
+    # 3. reaching a sub-chart's final state completes the actor, which fires the
+    #    call site's `onDone` — draw that return, once per site that PERFORMs it.
+    for src, ret_key in ret_of.items():
+        ret_state = root_states.get(ret_key)
+        if ret_state is None:
+            continue
+        for site, target in (sites.get(src) or []):
+            ret_state.setdefault("always", []).append({
+                "target": target,
+                "meta": {"kind": "return", "note": f"returns to {site}"},
+            })
+
+    return machine, {"charts": len(charts), "inlined": len(owner),
+                     "uncalled": sorted(_actor_name(s) for s in set(entry_of) - set(sites)),
+                     "nameClashes": clashes}
+
+
+def build_graph(machine, data=None, semantics=None, interface=None, charts=None):
     """XState v5 config dict -> {root, nodes, edges, boundary, index, grouping}.
     The external perimeter comes from the generator's `interface` section when
     present (real endpoints/events); otherwise it's derived from the LINKAGE
     section + I/O actions, when the machine carries no hand-authored meta.io."""
+    machine, chart_info = inline_charts(machine, charts)
     root_path = machine.get("id", "root")
     elk_nodes, edges = {}, []
     index = {"states": [], "transitions": [], "events": [], "guards": [],
@@ -762,7 +913,8 @@ def build_graph(machine, data=None, semantics=None, interface=None):
     grouping = compute_paragraph_grouping(elk_nodes, root_path)
 
     return {"root": root_path, "nodes": elk_nodes, "edges": edges,
-            "boundary": boundary, "index": index, "grouping": grouping}
+            "boundary": boundary, "index": index, "grouping": grouping,
+            "charts": chart_info}
 
 
 # ===========================================================================
@@ -846,8 +998,9 @@ HTML_SHELL = """<!doctype html>
 """
 
 
-def render_html(machine, title=None, data=None, semantics=None, interface=None):
-    graph = build_graph(machine, data, semantics, interface)
+def render_html(machine, title=None, data=None, semantics=None, interface=None,
+                charts=None):
+    graph = build_graph(machine, data, semantics, interface, charts)
     css, _ = read_vendor("viewer.css")
     viewer, _ = read_vendor("viewer.js")
     boot, _ = read_vendor("layout_boot.js")
@@ -958,8 +1111,12 @@ def main(argv=None):
     data = doc.get("data") if isinstance(doc, dict) else None
     semantics = doc.get("semantics") if isinstance(doc, dict) else None
     interface = doc.get("interface") if isinstance(doc, dict) else None
+    # Every PERFORMed paragraph is its own actor sub-chart under `charts`; without
+    # them only the top-level skeleton gets drawn (see inline_charts).
+    charts = doc.get("charts") if isinstance(doc, dict) else None
     html, graph, used_cdn = render_html(machine, title=args.title, data=data,
-                                        semantics=semantics, interface=interface)
+                                        semantics=semantics, interface=interface,
+                                        charts=charts)
     with open(out, "w", encoding="utf-8") as f:
         f.write(html)
 
@@ -969,6 +1126,16 @@ def main(argv=None):
     print(f"  states={len(idx['states'])} transitions={len(idx['transitions'])} "
           f"events={len(idx['events'])} guards={len(idx['guards'])} "
           f"boundary={len(nb['nodes'])} endpoints")
+    ci = graph.get("charts") or {}
+    if ci.get("charts"):
+        print(f"  charts: inlined {ci['inlined']} paragraph sub-chart(s) "
+              f"from {ci['charts']} chart(s)")
+        if ci.get("uncalled"):
+            print(f"  note: {len(ci['uncalled'])} sub-chart(s) nothing PERFORMs; "
+                  f"their returns stay unresolved: {', '.join(ci['uncalled'][:4])}")
+        if ci.get("nameClashes"):
+            print(f"  note: {len(ci['nameClashes'])} sub-chart state name(s) already "
+                  f"in the machine, kept the machine's: {', '.join(ci['nameClashes'][:4])}")
     if used_cdn:
         print("  note: a vendored lib was missing; output uses a CDN <script> and "
               "needs network to open. Re-vendor viz/vendor/ for a fully offline file.")

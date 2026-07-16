@@ -629,3 +629,122 @@ def test_opens_fully_expanded_with_paragraph_boxes():
     assert "var initialCollapsed = [];" in LAYOUT_JS, "must open fully expanded"
     assert "isParagraphBox" in LAYOUT_JS and "paragraph-box" in VIEWER_JS
     assert ".state.paragraph-box" in VIEWER_CSS
+
+
+# ---------------------------------------------------------------------------
+# `charts`: the bundle emits each PERFORMed paragraph as its own actor sub-chart
+# ---------------------------------------------------------------------------
+
+def _bundle_with_charts():
+    """The shape cobol-xstate emits: `machine` is only the top-level skeleton and
+    each PERFORMed paragraph is an actor sub-chart, entered by `invoke` and ended
+    at a `__RET__` final state."""
+    machine = {
+        "id": "P", "initial": "0000-MAIN",
+        "states": {"0000-MAIN": {
+            "initial": "_entry",
+            "states": {
+                "_entry": {"invoke": {"src": "actor:1000-OPEN",
+                                      "onDone": {"target": "#0000-MAIN__k1"}},
+                           "id": "0000-MAIN"},
+                "k1": {"always": [{"target": "#0000-MAIN__end"}], "id": "0000-MAIN__k1"},
+                "end": {"type": "final", "id": "0000-MAIN__end"},
+            }}}}
+    charts = {"actor:1000-OPEN": {
+        "initial": "1000-OPEN",
+        "states": {
+            "1000-OPEN": {"initial": "_entry", "states": {
+                "_entry": {"entry": ["OPEN_INPUT_TRAN-FILE"],
+                           "always": [{"target": "#__RET__"}], "id": "1000-OPEN"},
+            }, "meta": {"kind": "paragraph", "paragraph": "1000-OPEN"}},
+            "__RET__": {"type": "final", "id": "__RET__"},
+        }}}
+    return machine, charts
+
+
+def test_charts_sub_chart_states_are_drawn_not_dropped():
+    # walking `machine` alone draws the skeleton and silently loses the program
+    machine, charts = _bundle_with_charts()
+    skeleton = render_statechart.build_graph(machine)
+    full = render_statechart.build_graph(machine, charts=charts)
+    assert not any(p.endswith("1000-OPEN") for p in skeleton["nodes"]), \
+        "precondition: the paragraph is not in `machine`"
+    assert "P.1000-OPEN" in full["nodes"], "the sub-chart's paragraph must be drawn"
+    assert "P.1000-OPEN._entry" in full["nodes"], "its states must be drawn too"
+    assert full["charts"]["inlined"] == 2      # the paragraph + its return state
+
+
+def test_charts_invoke_and_return_are_wired_to_real_states():
+    machine, charts = _bundle_with_charts()
+    g = render_statechart.build_graph(machine, charts=charts)
+    nodes = set(g["nodes"])
+    kinds = {(e.get("meta") or {}).get("kind"): e for e in g["edges"]}
+    call, ret = kinds.get("invoke"), kinds.get("return")
+    assert call and ret, "PERFORM must draw a call edge and a return edge"
+    # the call enters the paragraph, the return lands on the call site's onDone
+    assert call["source"] == "P.0000-MAIN._entry" and call["target"] in nodes
+    assert call["target"].startswith("P.1000-OPEN")
+    assert ret["target"] == "P.0000-MAIN.k1"
+    assert "PERFORM 1000-OPEN" in call["meta"]["note"]
+    # a dangling target aborts the whole ELK layout, so nothing may be unresolved
+    assert not [e for e in g["edges"]
+                if e.get("unresolved") or e.get("danglingTarget") or e.get("ambiguous")]
+
+
+def test_each_sub_chart_keeps_its_own_return_state():
+    # every chart names its return state `__RET__`; merging as-is would collapse
+    # all of them onto one shared box and cross-wire the paragraphs' returns.
+    machine, charts = _bundle_with_charts()
+    charts["actor:9000-CLOSE"] = {
+        "initial": "9000-CLOSE",
+        "states": {"9000-CLOSE": {"initial": "_entry", "states": {
+                       "_entry": {"always": [{"target": "#__RET__"}], "id": "9000-CLOSE"}}},
+                   "__RET__": {"type": "final", "id": "__RET__"}}}
+    machine["states"]["0000-MAIN"]["states"]["k1"] = {
+        "invoke": {"src": "actor:9000-CLOSE", "onDone": {"target": "#0000-MAIN__end"}},
+        "id": "0000-MAIN__k1"}
+    g = render_statechart.build_graph(machine, charts=charts)
+    assert "P.1000-OPEN__RET__" in g["nodes"] and "P.9000-CLOSE__RET__" in g["nodes"]
+    assert not g["charts"]["nameClashes"], "return states must not collide"
+    # each paragraph returns only to the site that PERFORMs it
+    rets = {e["source"]: e["target"] for e in g["edges"]
+            if (e.get("meta") or {}).get("kind") == "return"}
+    assert rets["P.1000-OPEN__RET__"] == "P.0000-MAIN.k1"
+    assert rets["P.9000-CLOSE__RET__"] == "P.0000-MAIN.end"
+
+
+def test_charts_perimeter_state_resolves_by_its_xstate_id():
+    # `interface` names perimeter states by explicit `id` ("1000-OPEN__io5"),
+    # which is neither a path nor a path segment ("io5") — match it or the whole
+    # external boundary silently empties out.
+    machine, charts = _bundle_with_charts()
+    charts["actor:1000-OPEN"]["states"]["1000-OPEN"]["states"]["io5"] = {
+        "entry": ["read_TRAN-FILE"], "always": [{"target": "#__RET__"}],
+        "id": "1000-OPEN__io5"}
+    interface = {"endpoints": [{"endpoint": "TRAN-FILE", "type": "file", "directions": ["get"]}],
+                 "events": [{"endpoint": "TRAN-FILE", "direction": "get", "verb": "READ",
+                             "state": "1000-OPEN__io5"}]}
+    g = render_statechart.build_graph(machine, interface=interface, charts=charts)
+    edges = g["boundary"]["edges"]
+    assert edges, "the perimeter event must anchor to its state in the sub-chart"
+    assert edges[0]["state"] == "P.1000-OPEN.io5" and edges[0]["direction"] == "in"
+
+
+def test_machine_without_charts_is_untouched():
+    # the business and reactive views are flat single machines: no charts, and the
+    # inlining must be a no-op for them.
+    machine = {"id": "P", "initial": "a",
+               "states": {"a": {"always": [{"target": "b"}]}, "b": {"type": "final"}}}
+    base = render_statechart.build_graph(machine)
+    for charts in (None, {}):
+        g = render_statechart.build_graph(machine, charts=charts)
+        assert set(g["nodes"]) == set(base["nodes"])
+        assert len(g["edges"]) == len(base["edges"])
+        assert g["charts"] == {}
+
+
+def test_inlining_does_not_mutate_the_callers_bundle():
+    machine, charts = _bundle_with_charts()
+    before = json.dumps(charts, sort_keys=True)
+    render_statechart.build_graph(machine, charts=charts)
+    assert json.dumps(charts, sort_keys=True) == before, "input doc must not be mutated"
